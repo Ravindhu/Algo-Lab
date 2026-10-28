@@ -1,0 +1,14 @@
+{
+  "enabled": false,
+  "reason": "ScalpTrader is not validated yet. Backtest it, then set enabled to true.",
+  "timeframe": "M5",
+  "max_open": 3,
+  "risk_per_trade": 0.005,
+  "max_lots": 0.5,
+  "magic": 20262002,
+  "deviation_points": 20,
+  "strategies": [
+    {"type": "scalp", "params": {"ema_fast": 8, "ema_slow": 21, "rsi_n": 14, "atr_n": 14,
+                                "sl_mult": 1.0, "tp_mult": 1.5, "rsi_low": 40, "rsi_high": 60}}
+  ]
+}

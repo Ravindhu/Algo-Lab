@@ -1,0 +1,5 @@
+# Windows only. Installed by install_windows.ps1 after requirements.txt.
+# The official MetaTrader5 package is the only broker connection layer (no third-party wrapper).
+# Pin the exact version you tested (run `pip show MetaTrader5`) so upgrades are deliberate:
+# MetaTrader5==X.Y.Z
+MetaTrader5>=5.0.45; sys_platform == "win32"

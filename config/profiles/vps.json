@@ -1,0 +1,10 @@
+{
+  "name": "vps",
+  "data_dir": "data",
+  "dry_run": true,
+  "ollama": {"url": "", "model": "llama3.1:8b"},
+  "scanner": {"htf": "H4", "rsi_n": 14, "oversold": 30, "overbought": 70},
+  "risk": {"max_open_trades": 3},
+  "analyst": {"min_confidence": 0.6},
+  "mcp": {"transport": "streamable-http", "host": "0.0.0.0", "port": 8765}
+}

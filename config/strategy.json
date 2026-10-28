@@ -1,0 +1,12 @@
+{
+  "rsi_n": 14,
+  "oversold": 30.0,
+  "overbought": 70.0,
+  "atr_n": 14,
+  "sl_mult": 1.5,
+  "tp_mult": 3.0,
+  "ml_threshold": 0.0,
+  "version": 1,
+  "updated": null,
+  "reason": "initial values"
+}

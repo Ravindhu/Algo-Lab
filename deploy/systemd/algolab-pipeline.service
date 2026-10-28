@@ -1,0 +1,14 @@
+[Unit]
+Description=AlgoLab scan-and-review cycle
+After=network-online.target docker.service
+Wants=network-online.target
+OnFailure=algolab-notify@%n.service
+
+[Service]
+Type=oneshot
+User=algo
+WorkingDirectory=/opt/algolab
+EnvironmentFile=/opt/algolab/.env
+Environment=ALGOLAB_PROFILE=vps
+ExecStart=/opt/algolab/.venv/bin/python -m algolab.ops.pipeline
+TimeoutStartSec=600

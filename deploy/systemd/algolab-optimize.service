@@ -1,0 +1,12 @@
+[Unit]
+Description=AlgoLab weekly parameter optimization (report only, never changes live settings)
+OnFailure=algolab-notify@%n.service
+
+[Service]
+Type=oneshot
+User=algo
+WorkingDirectory=/opt/algolab
+EnvironmentFile=/opt/algolab/.env
+Environment=ALGOLAB_PROFILE=vps
+ExecStart=/opt/algolab/.venv/bin/python scripts/run_optimize.py
+TimeoutStartSec=7200
