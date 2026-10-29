@@ -202,28 +202,51 @@ async def cycle() -> dict:
                         f'entry {result["entry"]} SL {result["sl"]} TP {result["tp"]} | {mode}',
                         "WARNING")
 
-        # Framework Bot (ScalpTrader etc.). Off unless config/framework.json has "enabled": true.
-        fw_results = await run_framework(ad, p, symbols, acct.equity)
-        if fw_results is not None:
-            report["framework"] = fw_results
-
     write_json("live_last_cycle.json", report)
     log.info("cycle done: %d result(s)", len(report["results"]))
     return report
 
 
-def main() -> int:
+async def framework_cycle() -> dict:
+    """Framework strategies on their own schedule (every 5 minutes), with the same guard as the full cycle.
+    The full cycle no longer runs the framework, so each order is placed once."""
+    p = load_profile()
+    ops = ops_config()
+    symbols = load_symbols(ops)
+    report = {"ts": now_utc().isoformat(), "dry_run": p["dry_run"]}
+    async with Mt5Adapter() as ad:
+        problems, warnings = await ad.self_test()
+        for w in warnings:
+            log.warning(w)
+        if problems:
+            raise AdapterError("MT5 contract failed: " + "; ".join(problems))
+        acct = await ad.account()
+        ok, reason = guard(acct, ops)
+        report.update(may_trade=ok, reason=reason, equity=acct.equity)
+        if not ok:
+            write_json("framework_last_cycle.json", report)
+            log.warning("framework halted: %s", reason)
+            return report
+        fw = await run_framework(ad, p, symbols, acct.equity)
+        if fw is not None:
+            report["framework"] = fw
+    write_json("framework_last_cycle.json", report)
+    return report
+
+
+def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    framework_only = "--framework" in (sys.argv[1:] if argv is None else argv)
+    name = "framework_last_cycle.json" if framework_only else "live_last_cycle.json"
     try:
-        asyncio.run(cycle())
+        asyncio.run(framework_cycle() if framework_only else cycle())
         return 0
     except Exception as e:
-        log.exception("live cycle failed")
-        write_json("live_last_cycle.json", {"ts": now_utc().isoformat(),
-                                            "error": f"{type(e).__name__}: {e}"})
-        alerts.send(f"live cycle failed: {type(e).__name__}: {e}", "CRITICAL",
-                    key="live-error", cooldown_min=60)
+        log.exception("%s cycle failed", "framework" if framework_only else "live")
+        write_json(name, {"ts": now_utc().isoformat(), "error": f"{type(e).__name__}: {e}"})
+        alerts.send(f"{'framework' if framework_only else 'live'} cycle failed: "
+                    f"{type(e).__name__}: {e}", "CRITICAL", key="live-error", cooldown_min=60)
         return 1
 
 
