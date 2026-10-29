@@ -1,14 +1,23 @@
 {
   "enabled": false,
-  "reason": "ScalpTrader is not validated yet. Backtest it, then set enabled to true.",
+  "reason": "Framework is OFF until validated. Run the e2e replay and a backtest with the same settings, then set enabled to true. Prop rules are in config/prop.json and are separately enabled.",
   "timeframe": "M5",
   "max_open": 3,
   "risk_per_trade": 0.005,
   "max_lots": 0.5,
   "magic": 20262002,
   "deviation_points": 20,
+  "max_spread_atr": 0.25,
   "strategies": [
     {"type": "scalp", "params": {"ema_fast": 8, "ema_slow": 21, "rsi_n": 14, "atr_n": 14,
-                                "sl_mult": 1.0, "tp_mult": 1.5, "rsi_low": 40, "rsi_high": 60}}
+                                "sl_mult": 1.0, "tp_mult": 1.5, "rsi_low": 40, "rsi_high": 60}},
+    {"type": "ocl", "params": {"htf": "15minute", "ltf": "5minute",
+                               "trigger_level_mode": "CONSERVATIVE", "allow_c4_confirmation": true,
+                               "hm_enabled": true, "rsi_period": 9, "ema_period": 3, "oversold": 30.0,
+                               "ltf_pattern_enabled": true, "touch_buffer": 0.0, "touch_buffer_pips": 0.0,
+                               "target_rr": 3.0, "exit_mode": "AUTO", "max_ltf_retries": 3,
+                               "atr_period": 14, "atr_multiplier": 2.0, "atr_trail_enabled": true,
+                               "breakeven_rr": 1.5, "round_trip_cost_pct": 0.20,
+                               "disaster_stop_atr": 1.0, "max_spread_atr": 0.25, "lookback": 120}}
   ]
 }

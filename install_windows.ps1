@@ -15,7 +15,8 @@ Requires: Windows 10/11, internet, and an MT5 broker login (you can finish login
 param(
   [ValidateSet("Standalone", "Vps")] [string]$Mode = "Standalone",
   [ValidateSet("install", "start", "stop", "status", "uninstall")] [string]$Action = "install",
-  [int]$IntervalMinutes = 15
+  [int]$IntervalMinutes = 15,
+  [int]$FrameworkMinutes = 5
 )
 
 $ErrorActionPreference = "Stop"
@@ -25,7 +26,8 @@ $Py = Join-Path $Venv "Scripts\python.exe"
 $Mt5Exe = "C:\Program Files\MetaTrader 5\terminal64.exe"
 $TaskSync = "AlgoLab-Sync"
 $TaskLive = "AlgoLab-Live"
-$Tasks = @($TaskSync, $TaskLive)
+$TaskFw = "AlgoLab-Framework"
+$Tasks = @($TaskSync, $TaskLive, $TaskFw)
 
 function Step([string]$msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 
@@ -101,20 +103,22 @@ function Register-AlgoTasks {
   $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
   $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
-  $repeat = New-TimeSpan -Minutes $IntervalMinutes
   $duration = New-TimeSpan -Days 3650
 
-  # Sync first (minute 0), then live cycle 4 minutes later, so the live cycle sees fresh data.
+  # Sync (minute 0), then the full live cycle 4 minutes later. The framework has its own task so a
+  # lower timeframe sees a fresh closed bar every 5 minutes.
   $defs = @(
-    @{ Name = $TaskSync; Args = "-m algolab.bridge.windows_sync"; Start = (Get-Date).AddMinutes(1) },
-    @{ Name = $TaskLive; Args = "-m algolab.live.pipeline";       Start = (Get-Date).AddMinutes(5) }
+    @{ Name = $TaskSync; Args = "-m algolab.bridge.windows_sync";       Start = (Get-Date).AddMinutes(1); Every = $IntervalMinutes },
+    @{ Name = $TaskLive; Args = "-m algolab.live.pipeline";             Start = (Get-Date).AddMinutes(5); Every = $IntervalMinutes },
+    @{ Name = $TaskFw;   Args = "-m algolab.live.pipeline --framework"; Start = (Get-Date).AddMinutes(2); Every = $FrameworkMinutes }
   )
   foreach ($d in $defs) {
+    $repeat = New-TimeSpan -Minutes $d.Every
     $action = New-ScheduledTaskAction -Execute $Py -Argument $d.Args -WorkingDirectory $Root
     $trigger = New-ScheduledTaskTrigger -Once -At $d.Start -RepetitionInterval $repeat -RepetitionDuration $duration
     Register-ScheduledTask -TaskName $d.Name -Action $action -Trigger $trigger `
       -Settings $settings -Principal $principal -Force | Out-Null
-    Write-Host "registered $($d.Name) every $IntervalMinutes min"
+    Write-Host "registered $($d.Name) every $($d.Every) min"
   }
 }
 

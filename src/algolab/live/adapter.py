@@ -202,6 +202,47 @@ class Mt5Adapter:
         return {"ticket": res.order, "fill_price": res.price}
 
 
+    # --- account and framework position management (synchronous, like the other order calls) ---
+    def account_currency(self) -> str:
+        info = self.mt5.account_info()
+        if info is None:
+            raise self._err("account_info")
+        return str(info.currency)
+
+    def positions_by_magic(self, magic: int) -> list[dict]:
+        """Open positions opened by this project (matching magic). Raises on a terminal error so the
+        caller fails closed. An error is never reported as an empty list."""
+        raw = self.mt5.positions_get()
+        if raw is None:
+            raise self._err("positions_get")
+        out = []
+        for pos in raw:
+            if int(getattr(pos, "magic", 0)) != int(magic):
+                continue
+            out.append({"ticket": int(pos.ticket), "symbol": str(pos.symbol),
+                        "side": 1 if pos.type == self.mt5.ORDER_TYPE_BUY else -1,
+                        "price_open": float(pos.price_open), "sl": float(pos.sl),
+                        "tp": float(pos.tp), "volume": float(pos.volume)})
+        return out
+
+    def close_position(self, ticket: int, symbol: str, side: int, volume: float,
+                       magic: int, deviation: int) -> dict:
+        """Close an open position at market."""
+        t = self.tick(symbol)
+        mt5 = self.mt5
+        req = {
+            "action": mt5.TRADE_ACTION_DEAL, "position": int(ticket), "symbol": symbol,
+            "volume": float(volume),
+            "type": mt5.ORDER_TYPE_SELL if side > 0 else mt5.ORDER_TYPE_BUY,
+            "price": t["bid"] if side > 0 else t["ask"],
+            "deviation": deviation, "magic": magic, "comment": "algolab-close",
+            "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC,
+        }
+        res = mt5.order_send(req)
+        if res is None or res.retcode != mt5.TRADE_RETCODE_DONE:
+            raise AdapterError(f"close_position failed for ticket {ticket}: {res}")
+        return {"ticket": int(ticket), "fill_price": float(res.price)}
+
 async def _main() -> int:
     async with Mt5Adapter() as ad:
         problems, warnings = await ad.self_test()
