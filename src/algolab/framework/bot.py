@@ -2,9 +2,13 @@
 
 Safety defaults (same as the live pipeline):
   - dry_run=True: signals are reported, nothing is sent to the broker.
-  - An error in one strategy is recorded and the others still run.
+  - An error in one strategy or one order is recorded and the others still run.
   - If the open-position count is unknown, no order is placed (fail closed).
-  - Each (strategy, symbol, side, bar time) is acted on once per process.
+  - Each (strategy, symbol, side, bar time) is acted on once. The key is handed to on_seen BEFORE the order,
+    so a store that persists it (the live cycle does) also prevents a repeat after a restart. If the key
+    cannot be stored, the signal is not traded.
+  - on_fill runs immediately after a real fill, before anything else, so the position is recorded the moment it
+    exists. If recording fails the fill is still reported (record_error) and the next reconciliation catches it.
   - gate(rec) runs before sizing (e.g. prop-firm rules). A False result skips the signal with a reason.
   - sizer(rec) may return {"skip": reason} to skip with a specific reason, or None for a generic skip.
 """
@@ -22,6 +26,10 @@ log = logging.getLogger("algolab.bot")
 REQUIRED_ORDER_KEYS = ("lots", "sl", "tp")
 
 
+async def _maybe_await(value):
+    return await value if inspect.isawaitable(value) else value
+
+
 @dataclass
 class Bot:
     adapter: Any                                    # Mt5Adapter, or any object with the same methods
@@ -33,7 +41,9 @@ class Bot:
     on_signal: Callable[[dict], Any] | None = None  # optional hook (alerts, logging); may be async
     sizer: Callable[[dict], Any] | None = None      # signal -> {"lots", "sl", "tp"} | {"skip": why} | None
     gate: Callable[[dict], tuple[bool, str]] | None = None
-    _seen: set = field(default_factory=set, repr=False)
+    on_fill: Callable[[dict], Any] | None = None    # called right after a real fill; may be async
+    on_seen: Callable[[str], Any] | None = None     # persists a signal key before its order; may be async
+    seen: set = field(default_factory=set, repr=False)
 
     def add(self, strategy: Strategy) -> "Bot":
         self.strategies.append(strategy)
@@ -45,9 +55,7 @@ class Bot:
             if not ok:
                 return {**rec, "executed": False, "why": why}
         if self.sizer and any(k not in rec for k in REQUIRED_ORDER_KEYS):
-            plan = self.sizer(rec)
-            if inspect.isawaitable(plan):
-                plan = await plan
+            plan = await _maybe_await(self.sizer(rec))
             if isinstance(plan, dict) and "skip" in plan:
                 return {**rec, "executed": False, "why": plan["skip"]}
             if not plan:
@@ -66,7 +74,16 @@ class Bot:
         res = await asyncio.to_thread(self.adapter.market_order, rec["symbol"], rec["side"],
                                       rec["lots"], rec["sl"], rec["tp"],
                                       self.magic, self.deviation)
-        return {**rec, "executed": True, **res}
+        filled = {**rec, "executed": True, **res}
+        filled["lots"] = float(res.get("volume") or rec["lots"])     # the volume that actually filled
+        if self.on_fill:
+            try:
+                await _maybe_await(self.on_fill(filled))
+            except Exception as e:                  # the fill is real: report it, do not hide it
+                log.critical("fill %s recorded with error: %s (reconciliation will check it)",
+                             res.get("ticket"), e)
+                filled["record_error"] = f"{type(e).__name__}: {e}"
+        return filled
 
     async def run_once(self) -> list[dict]:
         results: list[dict] = []
@@ -87,16 +104,31 @@ class Bot:
             if not sig:
                 continue
             bar = str(df.index[-2]) if len(df) >= 2 else str(df.index[-1])
-            key = (s.name, s.symbol.name, sig["side"], bar)
-            if key in self._seen:
+            key = f"{s.name}|{s.symbol.name}|{sig['side']}|{bar}"
+            if key in self.seen:
                 continue
-            self._seen.add(key)                         # mark before acting: no duplicate orders on retry
+            self.seen.add(key)                          # marked before acting: no duplicate orders on retry
+            try:
+                if self.on_seen:
+                    await _maybe_await(self.on_seen(key))
+            except Exception as e:
+                log.critical("signal %s not traded: could not persist its key (%s)", key, e)
+                self.seen.discard(key)
+                results.append({"strategy": s.name, "symbol": s.symbol.name, "executed": False,
+                                "error": f"key not persisted: {type(e).__name__}: {e}"})
+                continue
 
             rec = {"strategy": s.name, "symbol": s.symbol.name, "bar": bar, **sig}
-            rec = await self._place(rec)
+            try:
+                rec = await self._place(rec)
+            except Exception as e:                      # an order error must not stop the other signals
+                log.error("order for %s failed: %s", key, e)
+                rec = {"strategy": s.name, "symbol": s.symbol.name, "bar": bar, **sig,
+                       "executed": False, "error": f"{type(e).__name__}: {e}"}
             if self.on_signal:
-                out = self.on_signal(rec)
-                if inspect.isawaitable(out):
-                    await out
+                try:
+                    await _maybe_await(self.on_signal(rec))
+                except Exception as e:
+                    log.error("signal hook failed for %s: %s", key, e)
             results.append(rec)
         return results

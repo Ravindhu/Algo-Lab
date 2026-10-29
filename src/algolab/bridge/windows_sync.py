@@ -39,13 +39,24 @@ def fetch_symbol(symbol: str, tf_name: str):
     return out
 
 
+def net_deposits() -> float:
+    """Deposits minus withdrawals (balance deals). The risk limits ignore money moved in or out."""
+    deals = mt5.history_deals_get(0, int(datetime.now(timezone.utc).timestamp()) + 86400)
+    if deals is None:
+        raise RuntimeError(f"history_deals_get failed: {mt5.last_error()}")
+    return float(sum(d.profit for d in deals if d.type == 2))
+
+
 def account_snapshot() -> dict:
     info = mt5.account_info()
     if info is None:
         raise RuntimeError(f"account_info failed: {mt5.last_error()}")
-    positions = mt5.positions_get() or []
+    positions = mt5.positions_get()
+    if positions is None:
+        raise RuntimeError(f"positions_get failed: {mt5.last_error()}")
     return {"ts": datetime.now(timezone.utc).isoformat(), "equity": info.equity,
-            "balance": info.balance, "open_positions": len(positions)}
+            "balance": info.balance, "open_positions": len(positions),
+            "net_deposits": net_deposits()}
 
 
 def write_account(snap: dict) -> None:

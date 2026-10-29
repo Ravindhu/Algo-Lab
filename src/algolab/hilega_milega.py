@@ -3,8 +3,8 @@
 
 Reference: the "HILEGA_MILEGA" TradingView indicator (Nitish Kumar):
 RSI (default 9) with an EMA (default 3) plotted over it. This module
-provides the series math only; the BUY-only gate lives in
-``blue_engine.alpha.Statergy.ocl_keylevel.OCLKeylevelSignal``.
+provides the series math only; the strategy gates live in
+algolab.signals.engulfing (engulfing + HM) and algolab.framework.strategies.ocl.
 
 Simplified operator rule: the WMA(RSI) leg is NOT required. Bullish is
 RSI above EMA(RSI) AND RSI at/below the oversold level (default 30) -

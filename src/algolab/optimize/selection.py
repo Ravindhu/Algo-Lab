@@ -15,11 +15,15 @@ Selection rule (robust, minimum evidence required):
 
 Guard rails (anti-overfit, same spirit as autotune):
   - demotion requires the strategy to fail the gates (never on a whim),
-  - every selection run appends to reports/selection_latest.json,
+  - the win-rate bound is corrected for multiple comparisons (Bonferroni across the strategies ranked),
+    so a strategy is not promoted because it was the luckiest of many,
+  - only trades with BROKER-realised P&L count. Unknown P&L is excluded, never treated as zero,
+  - every selection run appends to reports/selection_latest.json. Changes are written only with --apply
+    (the daily timer runs report-only; a person approves the change),
   - a strategy is never demoted while it still has open positions managed by
     the position manager (its exits keep working; only NEW entries stop).
 
-CLI:  algolab-select [--dry-run]
+CLI:  algolab-select [--apply]
 """
 from __future__ import annotations
 
@@ -28,15 +32,18 @@ import json
 import math
 from collections import defaultdict
 
+from statistics import NormalDist
+
 from algolab.ops import alerts
-from algolab.ops.state import now_utc, read_json, write_json
+from algolab.ops.state import atomic_write_text, now_utc, write_json
 from algolab.profile import ROOT
 
 HANDOFF = "framework_handoff.json"
 SELECTION = "selection.json"
 REPORTS = ROOT / "reports"
 MIN_R_WINDOW = 60                       # closed trades considered for ranking
-DEFAULTS = {"top_n": 3, "min_trades": 20, "min_profit_factor": 1.0,
+FAMILY_ALPHA = 0.05                     # one-sided error across all strategies ranked together
+DEFAULTS = {"top_n": 3, "min_trades": 30, "min_profit_factor": 1.0,
             "min_lower_bound": 0.35}
 
 
@@ -52,8 +59,8 @@ def load_framework_config() -> dict:
 
 
 def _closes() -> list[dict]:
-    from algolab.ops.journal import read
-    rows = [r for r in read() if r.get("kind") == "close"]
+    from algolab.ops.journal import usable_closes
+    rows = [r for r in usable_closes() if r.get("r") is not None]   # broker P&L only
     return rows[-MIN_R_WINDOW * 10:]           # bounded lookback
 
 
@@ -64,20 +71,19 @@ def _r_per_strategy(rows: list[dict]) -> dict[str, list[float]]:
     return out
 
 
-def _win_rate_lower_bound(rs: list[float]) -> float | None:
-    """Wilson lower bound of the win rate at 95% — punishes small samples."""
+def _win_rate_lower_bound(rs: list[float], z: float = 1.96) -> float | None:
+    """Wilson lower bound of the win rate. z is set per family size (see rank_strategies)."""
     n = len(rs)
     if n == 0:
         return None
     p = sum(1 for r in rs if r > 0) / n
-    z = 1.96
     denom = 1 + z * z / n
     centre = p + z * z / (2 * n)
     rad = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
     return (centre - rad) / denom
 
 
-def _score(rs: list[float], cfg: dict) -> dict:
+def _score(rs: list[float], cfg: dict, z: float = 1.96) -> dict:
     """Ranking metrics for one strategy. Pass requires enough trades and
     positive expectancy; the score itself is expectancy * sqrt(n)."""
     n = len(rs)
@@ -90,7 +96,7 @@ def _score(rs: list[float], cfg: dict) -> dict:
     wins = [r for r in rs if r > 0]
     losses = [r for r in rs if r <= 0]
     pf = (sum(wins) / abs(sum(losses))) if losses and sum(losses) != 0 else None
-    lb = _win_rate_lower_bound(rs)
+    lb = _win_rate_lower_bound(rs, z)
     passes = exp > 0 and (pf is None or pf >= cfg["min_profit_factor"]) \
         and (lb is None or lb >= cfg["min_lower_bound"])
     return {"n": n, "expectancy": round(exp, 4), "score": round(exp * math.sqrt(n), 4),
@@ -99,11 +105,18 @@ def _score(rs: list[float], cfg: dict) -> dict:
             "passes": passes, "why": "ok" if passes else "gates not met"}
 
 
+def family_z(m: int) -> float:
+    """One-sided z for a Wilson bound with a Bonferroni correction over m strategies."""
+    m = max(int(m), 1)
+    return NormalDist().inv_cdf(1 - FAMILY_ALPHA / m)
+
+
 def rank_strategies(cfg: dict | None = None) -> dict[str, dict]:
     """strategy name -> metrics dict, for every strategy with journal closes."""
     cfg = cfg or _config()
     by = _r_per_strategy(_closes())
-    return {name: _score(rs, cfg) for name, rs in by.items()}
+    z = family_z(len(by))
+    return {name: _score(rs, cfg, z) for name, rs in by.items()}
 
 
 def apply_selection(dry_run: bool = True, cfg: dict | None = None) -> dict:
@@ -166,7 +179,7 @@ def apply_selection(dry_run: bool = True, cfg: dict | None = None) -> dict:
         return result
     if changes:
         fw_path = ROOT / "config" / "framework.json"
-        fw_path.write_text(json.dumps(fw, indent=2) + "\n")
+        atomic_write_text(fw_path, json.dumps(fw, indent=2) + "\n")
         write_json(SELECTION, result)
         for ch in changes:
             alerts.send(f"selection: {ch['strategy']} {'enabled' if ch['would'] else 'disabled'} "
@@ -178,7 +191,7 @@ def apply_selection(dry_run: bool = True, cfg: dict | None = None) -> dict:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="algolab-select")
     ap.add_argument("--apply", action="store_true",
-                    help="write framework.json (default: report only)")
+                    help="write framework.json (default: report only; the daily timer never applies)")
     args = ap.parse_args(argv)
     result = apply_selection(dry_run=not args.apply)
     print(json.dumps(result, indent=2, default=str))

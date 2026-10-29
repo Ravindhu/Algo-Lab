@@ -8,5 +8,5 @@ User=algo
 WorkingDirectory=/opt/algolab
 EnvironmentFile=/opt/algolab/.env
 Environment=ALGOLAB_PROFILE=vps
-ExecStart=/opt/algolab/.venv/bin/python -m algolab.optimize.selection --apply
+ExecStart=/opt/algolab/.venv/bin/python -m algolab.optimize.selection
 TimeoutStartSec=600

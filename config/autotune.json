@@ -8,5 +8,6 @@
   "min_profit_factor": 1.2,
   "min_improvement_pct": 10,
   "sealed_frac": 0.1,
-  "max_holdout_uses": 3
+  "max_holdout_uses": 3,
+  "auto_apply": false
 }

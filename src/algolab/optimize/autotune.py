@@ -10,12 +10,14 @@
   3. The best set and the current set are both scored on the holdout.
   4. The candidate is applied only if it passes the holdout gate and beats the current set by the
      required margin.
-  5. It is written to config/strategy.json (backup kept), the live model is retrained, the shared
-     parameters are synced into config/framework.json, and the formal validation runs again. If that
-     fails, the old parameters, model and framework file are restored.
+  5. Only when the candidate is APPROVED (config "auto_apply": true, or `algolab optimize --apply`) is it
+     written to config/strategy.json (backup kept), the live model is retrained, the shared parameters are
+     synced into config/framework.json, and the formal validation runs again. If that fails, the old
+     parameters, model and framework file are restored. Without approval a better candidate is saved to
+     state/pending_candidate.json and nothing changes.
   6. Results go to reports/autotune_latest.json, and an alert is sent.
 
-Nothing here places orders. It only changes the parameter file that the live pipeline reads."""
+Nothing here places orders. It only changes the parameter file that the live pipeline reads, and only with approval."""
 from __future__ import annotations
 
 import json
@@ -30,7 +32,7 @@ from algolab.backtest.validate import run_validation
 from algolab.ml import features as F
 from algolab.ml import model as M
 from algolab.ops import alerts
-from algolab.ops.state import STATE_DIR, now_utc, read_json, write_json
+from algolab.ops.state import STATE_DIR, atomic_write_text, now_utc, read_json, write_json
 from algolab.profile import ROOT, load_profile
 
 WARMUP = 300
@@ -204,7 +206,7 @@ def _sync_framework(params: dict) -> bytes:
         if e["type"] == "scalp":
             for k in SHARED_KEYS:
                 e["params"][k] = params[k]
-    FW_CONFIG.write_text(json.dumps(fw, indent=2) + "\n")
+    atomic_write_text(FW_CONFIG, json.dumps(fw, indent=2) + "\n")
     return old
 
 
@@ -232,7 +234,17 @@ def run_sealed_test(force: bool = False) -> dict:
     return result
 
 
-def run_autotune() -> dict:
+PENDING = "pending_candidate.json"
+
+
+def decide_apply(better: bool, exhausted: bool, auto_apply: bool, approve: bool) -> bool:
+    """A candidate changes live settings only when it is better, the holdout is still fresh, and a person
+    approved it (approve=True) or the config explicitly allows automatic application."""
+    return bool(better and not exhausted and (auto_apply or approve))
+
+
+def run_autotune(approve: bool = False) -> dict:
+    """Search, gate and (only when approved) apply. approve=True is the explicit human sign-off."""
     import optuna
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -260,12 +272,13 @@ def run_autotune() -> dict:
     exhausted = uses > int(cfg["max_holdout_uses"])
 
     cur_ok = cur_m is not None and _gate(cur_m, cfg)[0]
+    auto = bool(cfg.get("auto_apply", False)) or approve
     if new_m is None:
         new_ok, gate_reasons = False, ["ML model could not be fitted on search data"]
     else:
         new_ok, gate_reasons = _gate(new_m, cfg)
     better = new_ok and (not cur_ok or _better(new_m, cur_m, cfg))
-    apply = better and not exhausted
+    apply = decide_apply(better, exhausted, bool(cfg.get("auto_apply", False)), approve)
 
     if not new_ok:
         reasons = gate_reasons
@@ -275,6 +288,9 @@ def run_autotune() -> dict:
     elif not better:
         reasons = ["candidate passed the holdout gate but does not beat current settings by "
                    f"{cfg['min_improvement_pct']}%"]
+    elif not auto:
+        reasons = ["candidate beats current settings on holdout; awaiting approval "
+                   "(review reports/autotune_latest.json, then run: algolab optimize --apply)"]
     else:
         reasons = ["candidate beats current settings on holdout"]
 
@@ -284,7 +300,12 @@ def run_autotune() -> dict:
               "candidate": {"params": {**asdict(bp), "ml_threshold": bthr}, "holdout": new_m},
               "trials": _trials(study), "trials_total": len(study.trials)}
 
+    if better and not auto:
+        write_json(PENDING, {"ts": now_utc().isoformat(), "params": {**asdict(bp), "ml_threshold": bthr},
+                             "holdout": new_m, "current_holdout": cur_m})
+
     if apply:
+        (STATE_DIR / PENDING).unlink(missing_ok=True)      # applied: the pending candidate is consumed
         old_model = M.MODEL_FILE.read_bytes() if M.MODEL_FILE.exists() else None
         backup = S.write({**asdict(bp), "ml_threshold": bthr},
                          reason=f"autotune {now_utc().date().isoformat()}")

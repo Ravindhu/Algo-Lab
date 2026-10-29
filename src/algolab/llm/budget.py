@@ -39,7 +39,8 @@ class CachedAnalyst:
 
     @staticmethod
     def key(cand: dict) -> str:
-        fields = {k: cand.get(k) for k in ("symbol", "side", "time", "rsi")}
+        # The identity of a signal: the same closed bar must never be sent to the LLM twice.
+        fields = {k: cand.get(k) for k in ("symbol", "side", "time")}
         return hashlib.sha1(json.dumps(fields, sort_keys=True).encode()).hexdigest()[:16]
 
     def run(self, cand: dict) -> dict:

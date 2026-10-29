@@ -49,11 +49,16 @@ class AnalystAgent:
 
 class Orchestrator:
     def __init__(self, profile: dict | None = None):
+        # Imported here: llm.budget imports ANALYST_PROMPT from this module.
+        from algolab.llm.budget import CachedAnalyst, budget_from_config
+
         self.p = profile or load_profile()
         o = self.p["ollama"]
         self.scanner = ScannerAgent()
         self.risk = RiskAgent(self.p["risk"]["max_open_trades"])
-        self.analyst = AnalystAgent(OllamaClient(o["url"], o["api_key"], o["model"]))
+        # Every analyst call goes through the daily token budget and the verdict cache.
+        self.analyst = CachedAnalyst(AnalystAgent(OllamaClient(o["url"], o["api_key"], o["model"])),
+                                     budget_from_config())
 
     def run(self, open_positions: int = 0) -> dict:
         candidates = self.risk.run(self.scanner.run(self.p["scanner"]["htf"]), open_positions)

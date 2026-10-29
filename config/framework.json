@@ -101,5 +101,6 @@
     "warmup_entries": 30,
     "window": 60,
     "min_lower_bound": 0.25
-  }
+  },
+  "max_margin_use": 0.5
 }

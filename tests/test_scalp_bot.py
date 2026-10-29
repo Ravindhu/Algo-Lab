@@ -9,6 +9,19 @@ from algolab.live import framework_runner as FR
 
 
 class FakeAdapter:
+    # adapter surface added for the live safety checks (margin, broker P&L, reconciliation)
+    def margin_for(self, symbol, side, lots):
+        return 0.0
+
+    def free_margin(self):
+        return 1e9
+
+    def realized_pnl(self, ticket):
+        return getattr(self, "realized", {}).get(int(ticket))
+
+    def position_tickets(self, magic):
+        return {int(p["ticket"]) for p in self.positions}
+
     def __init__(self, df=None, open_positions=0):
         self._df = df if df is not None else random_frame()
         self._open = open_positions

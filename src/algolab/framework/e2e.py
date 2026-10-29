@@ -52,7 +52,9 @@ def load_real(symbol: str, data_dir: Path) -> dict[str, pd.DataFrame]:
     return {"M5": load_csv(data_dir / f"{symbol}_M5.csv"), "M15": load_csv(data_dir / f"{symbol}_M15.csv")}
 
 
-def build_data(symbols: list[str], bars: int, seed: int, data_dir: Path | None) -> tuple[dict, pd.DatetimeIndex, str]:
+def build_data(symbols: list[str], bars: int, seed: int, data_dir: Path | None,
+               keep_fraction: float = 1.0) -> tuple[dict, pd.DatetimeIndex, str]:
+    """keep_fraction < 1 keeps only the first part of real history (validation excludes the sealed tail)."""
     real = data_dir is not None and all(
         (data_dir / f"{s}_M5.csv").exists() and (data_dir / f"{s}_M15.csv").exists() for s in symbols)
     if real:
@@ -61,6 +63,8 @@ def build_data(symbols: list[str], bars: int, seed: int, data_dir: Path | None) 
         for s in symbols[1:]:
             index = index.intersection(per[s]["M5"].index)
         index = index.sort_values()
+        if keep_fraction < 1.0:
+            index = index[: max(int(len(index) * keep_fraction), 1)]
         for s in symbols:
             per[s]["M5"] = per[s]["M5"].loc[index]
         source = f"CSV in {data_dir}"
@@ -119,12 +123,12 @@ CONTRACT_SIZE = 100000.0
 def run_e2e(symbols: list[str], bars: int = 3000, seed: int = 7, data_dir: Path | None = None,
             profile: str | None = None, prop_enabled: bool = True, balance: float = 10000.0,
             out_dir: Path | None = None, prop_override: dict | None = None,
-            warmup: int = 130) -> dict:
-    from algolab.live import framework_runner as FR
-
+            warmup: int = 130, strategy_types: tuple[str, ...] = ("ocl",),
+            keep_fraction: float = 1.0) -> dict:
     base = json.loads((ROOT / "config" / "framework.json").read_text())
     cfg = {**base, "enabled": True,
-           "strategies": [s for s in base["strategies"] if s["type"] == "ocl"]}
+           "strategies": [s for s in base["strategies"]
+                          if s["type"] in strategy_types and s.get("enabled", True)]}
     cfg["max_spread_atr"] = cfg.get("max_spread_atr", 0.25)
 
     pcfg = load_prop_config()
@@ -138,7 +142,7 @@ def run_e2e(symbols: list[str], bars: int = 3000, seed: int = 7, data_dir: Path 
         _, rules_obj = select_profile(pcfg)
         rules = rules_obj
 
-    per, index, source = build_data(symbols, bars, seed, data_dir)
+    per, index, source = build_data(symbols, bars, seed, data_dir, keep_fraction)
     tmp = Path(tempfile.mkdtemp(prefix="algolab-e2e-"))
     old_state_dir, old_send = ops_state.STATE_DIR, alerts.send
     recorded: list[str] = []
@@ -154,6 +158,7 @@ def run_e2e(symbols: list[str], bars: int = 3000, seed: int = 7, data_dir: Path 
     pnl = [t["pnl"] for t in sim.trades]
     report = {
         "data": source, "symbols": symbols, "bars": len(index), "seed": seed,
+        "strategy_types": list(strategy_types),
         "profile": pcfg.get("active_profile") if prop_enabled else None,
         "balance": {"start": sim.start_balance, "end": round(sim.balance, 2)},
         "orders": len(sim.orders), "trades": len(sim.trades),

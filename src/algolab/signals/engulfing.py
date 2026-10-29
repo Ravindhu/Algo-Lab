@@ -4,6 +4,10 @@ Rules (last CLOSED bar):
   BUY  : bullish engulfing AND RSI above EMA(RSI) (Hilega-Milega)
   SELL : bearish engulfing AND RSI below EMA(RSI) (Hilega-Milega)
 
+Both the live scanner and the backtest use hm_direction_series(), so a bar's HM state is the same
+whether it is evaluated live or replayed on history. A bar's state uses closes up to and including
+that bar only.
+
 Pure math only: no broker calls, no orders, no file writes (except the CLI helper below).
 """
 import json
@@ -13,18 +17,46 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from algolab.hilega_milega import ema, hilega_milega_rsi
 from algolab.profile import ROOT, load_profile
 
 
+def hm_direction_series(closes, rsi_period: int = 9, ema_period: int = 3) -> np.ndarray:
+    """Per-bar Hilega-Milega direction: +1 when RSI > EMA(RSI), -1 when RSI < EMA(RSI), 0 when undefined
+    or equal. Entry j uses closes[0..j] only, so the series is safe to read at any bar.
+
+    RSI is the simple-average RSI of the last rsi_period price changes (the same convention as
+    hilega_milega.hilega_milega_rsi). The EMA is seeded with the first RSI value (as hilega_milega.ema)."""
+    c = np.asarray(closes, dtype=float)
+    n = len(c)
+    p, e = int(rsi_period), int(ema_period)
+    out = np.zeros(n, dtype=int)
+    if p <= 0 or e <= 0 or n <= p:
+        return out
+    d = np.diff(c)
+    g = np.concatenate([[0.0], np.cumsum(np.clip(d, 0, None))])
+    lo = np.concatenate([[0.0], np.cumsum(np.clip(-d, 0, None))])
+    idx = np.arange(p, n)
+    gains = g[idx] - g[idx - p]
+    losses = lo[idx] - lo[idx - p]
+    safe = np.where(losses > 0, losses, 1.0)
+    rs = np.where(losses > 0, gains / safe, np.inf)
+    rsi = np.where(gains + losses == 0, 50.0, 100.0 - 100.0 / (1.0 + rs))
+    k = 2.0 / (e + 1.0)
+    ema_val = None
+    for j, r in enumerate(rsi):
+        ema_val = float(r) if ema_val is None else k * float(r) + (1 - k) * ema_val
+        if j + 1 >= e:
+            i = p + j
+            out[i] = 1 if r > ema_val else (-1 if r < ema_val else 0)
+    return out
+
+
 def hm_confirmed(closes: list[float], rsi_period: int = 9, ema_period: int = 3) -> int | None:
-    """Hilega-Milega direction: +1 when RSI is above EMA(RSI), -1 when below, None when unknown."""
-    rsi_values = hilega_milega_rsi(closes, rsi_period=rsi_period)
-    line = ema(rsi_values, ema_period)
-    r, e = rsi_values[-1] if rsi_values else None, line[-1] if line else None
-    if r is None or e is None:
+    """Hilega-Milega direction of the LAST element: +1, -1, or None when unknown or equal."""
+    if len(closes) == 0:
         return None
-    return 1 if r > e else (-1 if r < e else None)
+    d = int(hm_direction_series(closes, rsi_period, ema_period)[-1])
+    return d if d != 0 else None
 
 
 def engulfing(df: pd.DataFrame) -> pd.Series:
@@ -37,22 +69,25 @@ def engulfing(df: pd.DataFrame) -> pd.Series:
 
 
 def scan_frame(symbol: str, df: pd.DataFrame, cfg: dict) -> dict | None:
-    """One symbol's candles -> a signal dict for the last closed bar, or None."""
+    """One symbol's candles -> a signal dict for the last CLOSED bar, or None.
+
+    The last row of the frame is the bar still forming. It is dropped before anything is computed,
+    so neither the engulfing pattern nor the HM state can read a price that is not final yet."""
     rsi_period = int(cfg.get("hm_rsi_period", 9))
     ema_period = int(cfg.get("hm_ema_period", 3))
     if len(df) < max(rsi_period + ema_period + 3, 5):
         return None
-    df = df.copy()
-    df["eng"] = engulfing(df)
-    bar = df.iloc[-2]                      # last closed bar, not the forming one
-    conf = hm_confirmed([float(x) for x in df["close"]], rsi_period, ema_period)
+    closed = df.iloc[:-1].copy()           # drop the forming bar
+    closed["eng"] = engulfing(closed)
+    bar = closed.iloc[-1]                  # last closed bar
+    conf = int(hm_direction_series(closed["close"].to_numpy(), rsi_period, ema_period)[-1])
     if bar["eng"] > 0 and conf == 1:
         side = "BUY"
     elif bar["eng"] < 0 and conf == -1:
         side = "SELL"
     else:
         return None
-    return {"symbol": symbol, "side": side, "time": str(df.index[-2]),
+    return {"symbol": symbol, "side": side, "time": str(closed.index[-1]),
             "close": float(bar["close"])}
 
 

@@ -22,6 +22,7 @@ import importlib.metadata as md
 import json
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from types import ModuleType
 
 import pandas as pd
@@ -30,6 +31,7 @@ import pandas as pd
 REQUIRED_FUNCTIONS = (
     "initialize", "shutdown", "last_error", "account_info", "symbols_get", "symbol_select",
     "symbol_info", "symbol_info_tick", "copy_rates_from_pos", "positions_get", "order_send",
+    "order_calc_margin", "history_deals_get",
 )
 # Constants the project reads from the module.
 REQUIRED_CONSTANTS = (
@@ -37,10 +39,26 @@ REQUIRED_CONSTANTS = (
     "ORDER_FILLING_IOC", "ORDER_TIME_GTC",
 )
 TIMEFRAMES = ("M1", "M5", "M15", "M30", "H1", "H4", "D1")
+# Broker-side filling modes come as a bit mask on symbol_info().filling_mode (MT5 SYMBOL_FILLING_*).
+SYMBOL_FILLING_FOK = 1
+SYMBOL_FILLING_IOC = 2
+# Retcodes that mean the order (or part of it) was executed.
+FILLED_RETCODES_NAME = ("TRADE_RETCODE_DONE", "TRADE_RETCODE_DONE_PARTIAL")
+# Deal entry values for closing deals (MT5 DEAL_ENTRY_OUT, DEAL_ENTRY_INOUT).
+CLOSING_ENTRIES = (1, 2, 3)
+DEAL_TYPE_BALANCE = 2     # deposits, withdrawals and credits: not trading results
 
 
 class AdapterError(RuntimeError):
     pass
+
+
+class PartialClose(AdapterError):
+    """The broker closed only part of a position. The position is still open with less volume."""
+
+    def __init__(self, msg: str, remaining: float):
+        super().__init__(msg)
+        self.remaining = remaining
 
 
 @dataclass
@@ -48,6 +66,7 @@ class AccountState:
     equity: float
     balance: float
     open_positions: int | None      # None = unknown -> pipeline fails closed
+    net_deposits: float = 0.0       # deposits minus withdrawals to date (not trading results)
 
 
 def missing_api(mod: ModuleType) -> list[str]:
@@ -138,7 +157,9 @@ class Mt5Adapter:
         info = await self._run(self.mt5.account_info)
         if info is None:
             raise self._err("account_info")
-        return AccountState(float(info.equity), float(info.balance), await self.open_positions())
+        flows = await self._run(self.net_deposits)
+        return AccountState(float(info.equity), float(info.balance), await self.open_positions(),
+                            net_deposits=flows)
 
     async def open_positions(self) -> int | None:
         """Number of open positions, or None if the terminal could not answer."""
@@ -170,7 +191,59 @@ class Mt5Adapter:
         if info is None:
             raise self._err(f"symbol_info({symbol})")
         return {"contract_size": info.trade_contract_size, "volume_min": info.volume_min,
-                "volume_step": info.volume_step, "digits": info.digits}
+                "volume_step": info.volume_step,
+                "volume_max": float(getattr(info, "volume_max", 100.0)),
+                "digits": info.digits,
+                "filling_mode": int(getattr(info, "filling_mode", 0) or 0)}
+
+    def filling_type(self, symbol: str) -> int:
+        """The order filling mode the symbol accepts. Brokers differ; a hard-coded mode is rejected by some."""
+        mode = self.symbol_info(symbol)["filling_mode"]
+        if mode & SYMBOL_FILLING_IOC:
+            return int(getattr(self.mt5, "ORDER_FILLING_IOC", 1))
+        if mode & SYMBOL_FILLING_FOK:
+            return int(getattr(self.mt5, "ORDER_FILLING_FOK", 0))
+        return int(getattr(self.mt5, "ORDER_FILLING_RETURN", 2))
+
+    def free_margin(self) -> float:
+        info = self.mt5.account_info()
+        if info is None:
+            raise self._err("account_info")
+        return float(info.margin_free)
+
+    def margin_for(self, symbol: str, side: str, lots: float) -> float:
+        """Margin the broker would require for this order (account currency)."""
+        t = self.tick(symbol)
+        mt5 = self.mt5
+        action = mt5.ORDER_TYPE_BUY if side == "BUY" else mt5.ORDER_TYPE_SELL
+        price = t["ask"] if side == "BUY" else t["bid"]
+        m = mt5.order_calc_margin(action, symbol, float(lots), float(price))
+        if m is None:
+            raise self._err(f"order_calc_margin({symbol})")
+        return float(m)
+
+    def net_deposits(self) -> float:
+        """Deposits minus withdrawals, from the broker's balance deals. Used so the kill switch measures
+        trading results, not money moved in or out of the account."""
+        now = int(datetime.now(timezone.utc).timestamp())
+        deals = self.mt5.history_deals_get(0, now + 86400)
+        if deals is None:
+            raise self._err("history_deals_get")
+        return float(sum(float(getattr(d, "profit", 0.0)) for d in deals
+                         if int(getattr(d, "type", -1)) == DEAL_TYPE_BALANCE))
+
+    def realized_pnl(self, ticket: int) -> float | None:
+        """Realised profit of a closed position from the broker's deal history (profit + commission +
+        swap + fee). None when the history has no closing deal yet. The journal then records P&L as unknown
+        instead of guessing it."""
+        deals = self.mt5.history_deals_get(position=int(ticket))
+        if deals is None:
+            raise self._err(f"history_deals_get(position={ticket})")
+        if not any(int(getattr(d, "entry", -1)) in CLOSING_ENTRIES for d in deals):
+            return None
+        return float(sum(float(getattr(d, "profit", 0.0)) + float(getattr(d, "commission", 0.0))
+                         + float(getattr(d, "swap", 0.0)) + float(getattr(d, "fee", 0.0))
+                         for d in deals))
 
     def tick(self, symbol: str) -> dict:
         t = self.mt5.symbol_info_tick(symbol)
@@ -194,12 +267,23 @@ class Mt5Adapter:
             "magic": magic,
             "comment": "algolab",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,   # some brokers need FOK or RETURN
+            "type_filling": self.filling_type(symbol),
         }
         res = mt5.order_send(req)
-        if res is None or res.retcode != mt5.TRADE_RETCODE_DONE:
-            raise AdapterError(f"order_send failed: {res}")
-        return {"ticket": res.order, "fill_price": res.price}
+        if res is None:
+            # The request may or may not have reached the broker. Do not assume either way: the next
+            # cycle's reconciliation looks at real positions before anything else is decided.
+            raise AdapterError(f"order_send({symbol}) returned no result: state unknown, check positions")
+        if res.retcode not in self._filled_codes():
+            raise AdapterError(f"order_send failed: retcode {res.retcode} {getattr(res, 'comment', '')}")
+        volume = float(getattr(res, "volume", 0.0) or lots)
+        return {"ticket": res.order, "fill_price": res.price, "volume": volume,
+                "partial": res.retcode != mt5.TRADE_RETCODE_DONE}
+
+    def _filled_codes(self) -> set:
+        codes = {int(getattr(self.mt5, "TRADE_RETCODE_DONE", 10009))}
+        codes.add(int(getattr(self.mt5, "TRADE_RETCODE_DONE_PARTIAL", 10010)))
+        return codes
 
 
     # --- account and framework position management (synchronous, like the other order calls) ---
@@ -225,9 +309,12 @@ class Mt5Adapter:
                         "tp": float(pos.tp), "volume": float(pos.volume)})
         return out
 
+    def position_tickets(self, magic: int) -> set[int]:
+        return {p["ticket"] for p in self.positions_by_magic(magic)}
+
     def close_position(self, ticket: int, symbol: str, side: int, volume: float,
                        magic: int, deviation: int) -> dict:
-        """Close an open position at market."""
+        """Close an open position at market. A partial close raises PartialClose with the volume still open."""
         t = self.tick(symbol)
         mt5 = self.mt5
         req = {
@@ -236,12 +323,18 @@ class Mt5Adapter:
             "type": mt5.ORDER_TYPE_SELL if side > 0 else mt5.ORDER_TYPE_BUY,
             "price": t["bid"] if side > 0 else t["ask"],
             "deviation": deviation, "magic": magic, "comment": "algolab-close",
-            "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC,
+            "type_time": mt5.ORDER_TIME_GTC, "type_filling": self.filling_type(symbol),
         }
         res = mt5.order_send(req)
-        if res is None or res.retcode != mt5.TRADE_RETCODE_DONE:
-            raise AdapterError(f"close_position failed for ticket {ticket}: {res}")
-        return {"ticket": int(ticket), "fill_price": float(res.price)}
+        if res is None:
+            raise AdapterError(f"close_position({ticket}) returned no result: check positions")
+        if res.retcode not in self._filled_codes():
+            raise AdapterError(f"close_position failed for ticket {ticket}: retcode {res.retcode}")
+        closed = float(getattr(res, "volume", 0.0) or volume)
+        if closed + 1e-9 < float(volume):
+            raise PartialClose(f"partial close of ticket {ticket}: {closed} of {volume}",
+                               remaining=round(float(volume) - closed, 8))
+        return {"ticket": int(ticket), "fill_price": float(res.price), "volume": closed}
 
 async def _main() -> int:
     async with Mt5Adapter() as ad:

@@ -22,6 +22,19 @@ def no_alerts(monkeypatch):
 
 
 class FakeAdapter:
+    # adapter surface added for the live safety checks (margin, broker P&L, reconciliation)
+    def margin_for(self, symbol, side, lots):
+        return 0.0
+
+    def free_margin(self):
+        return 1e9
+
+    def realized_pnl(self, ticket):
+        return getattr(self, "realized", {}).get(int(ticket))
+
+    def position_tickets(self, magic):
+        return {int(p["ticket"]) for p in self.positions}
+
     def __init__(self, bid=1.0919, ask=1.0921):
         self.ticks = {"EURUSD": {"bid": bid, "ask": ask}}
         self.infos = {"EURUSD": {"contract_size": 100000.0, "volume_min": 0.01, "volume_step": 0.01,
@@ -194,7 +207,8 @@ def test_close_below_the_ltf_stop_closes_at_market_and_reports_sl():
     tracked = tracked_one()
     events = asyncio.run(positions.manage(ad, tracked, magic=20262002, deviation=20))
     assert ad.closed == [(1, "EURUSD")]
-    assert events[0]["reason"] == "SL" and events[0]["price"] == pytest.approx(1.077)
+    # the broker fill is the exit price (the fake's bid), not the bar close
+    assert events[0]["reason"] == "SL" and events[0]["price"] == pytest.approx(1.0919)
     assert tracked == {}
 
 

@@ -148,6 +148,25 @@ class SimBroker:
                 * self.rate(pos["symbol"])
         return self.balance + floating
 
+    # ---- adapter methods added for the live safety checks ----
+    def margin_for(self, symbol: str, side: str, lots: float) -> float:
+        """Margin at 1:100 leverage in account currency (approximation for the simulation)."""
+        mid = self._mid(symbol)
+        return float(lots) * CONTRACT * mid * self.rate(symbol) / 100.0
+
+    def free_margin(self) -> float:
+        used = sum(self.margin_for(p["symbol"], "BUY", p["volume"]) for p in self.positions.values())
+        return max(self.balance - used, 0.0)
+
+    def position_tickets(self, magic: int) -> set[int]:
+        return {t for t, p in self.positions.items() if p["magic"] == int(magic)}
+
+    def realized_pnl(self, ticket: int) -> float | None:
+        for t in reversed(self.trades):
+            if t["ticket"] == int(ticket):
+                return float(t["pnl"])
+        return None
+
     def close_all(self, reason: str) -> None:
         for t in list(self.positions):
             pos = self.positions[t]
