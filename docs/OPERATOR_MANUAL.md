@@ -1,7 +1,7 @@
 # Operator manual
 
 Keep this file current. `tests/test_operator_manual.py` fails if a command written here no longer exists.
-Last updated with branch `framework-ocl-prop-e2e`.
+Last updated on branch `fix/audit-gaps-feedback-loop`.
 
 ## 1. What this system is
 
@@ -72,7 +72,12 @@ Three stores under the ops state folder, `memory/`:
 Python access (`algolab.memory`): `remember(kind, record)`, `recall(kind, limit)`,
 `calibration_gap(records)`. Records are append-only. A new rule is added as a new record, not by editing old ones.
 
-## 6. Anthropic API for agents
+## 6. Agent models
+
+The analyst agents run on Ollama (`OLLAMA_URL`, `OLLAMA_MODEL`). The Anthropic check below is an optional
+check only. Nothing in the trading path calls the Anthropic API.
+
+## 6a. Anthropic API check (optional)
 
 Check feasibility without spending credits:
 ```
@@ -97,9 +102,31 @@ place orders or edit configuration without a human approving the change.
 | Push blocked with 403 | The git proxy has no access to the repo. The Claude GitHub App must be installed on that repo. |
 | Tests fail with "No module named algolab" | Run with `PYTHONPATH=src python -m pytest`. |
 
+## 7a. Sealed test and holdout discipline
+
+The optimizer splits history three ways: search (first 70%), holdout (next 20%), sealed (last 10%).
+The sealed slice is never used for selection. Run it once per parameter set:
+```
+algolab sealed
+```
+Result: `reports/sealed.json`. It refuses to run again for the same parameters unless `--force` is given.
+Each optimizer run that selects on the holdout is counted in `state/holdout_ledger.json`. After
+`max_holdout_uses` runs on the same window, no candidate is applied.
+
+## 7b. Trade journal and entry gate
+
+Every executed order and every framework closure is written to `state/journal.jsonl`. The dashboard's
+Trades tab reads it. The framework's entry gate uses the closed trades: after `warmup_entries` open trades
+and before `min_trades` closes, entries are allowed. After that, entries need the lower bound of the recent
+win rate to clear `min_lower_bound` (0.25 is the breakeven win rate for a 3R target, before costs).
+
+Legacy engulfing trades are recorded as opens only. Their broker-side exits are not yet reported back.
+
 ## 8. Known limits
 
 - Backtest and e2e results come from synthetic or unvalidated data until a real-history run is recorded here.
-- OCL parameters were ported from a stock-market setup. Re-derive touch buffer and round-trip cost for forex.
+- The optimizer tunes the legacy path. It writes its shared parameters (rsi_n, atr_n, sl_mult, tp_mult) into the framework's scalp strategy. OCL parameters are not optimized.
+- `validate` still uses the whole history, including the sealed slice. Only `algolab sealed` is out-of-sample for the optimizer's choices.
+- OCL parameters were ported from a stock-market setup. Touch buffer and round-trip cost now use pips for forex (`round_trip_cost_pips`). Re-derive them from your broker's spread and commission.
 - Monte Carlo assumes independent trades. Real trades cluster, so treat the drawdown numbers as optimistic.
 - No entry can be guaranteed profitable. The honest target is a positive lower bound on expectancy after costs, out of sample.

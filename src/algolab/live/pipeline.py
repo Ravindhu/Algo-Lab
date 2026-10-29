@@ -1,4 +1,4 @@
-"""Windows pipeline built on the MetaTrader5 package (through the adapter). One cycle per run; Task Scheduler runs it every 15 minutes.
+"""Windows pipeline built on the MetaTrader5 package (through the adapter). One cycle per run. The legacy cycle runs every 15 minutes. The framework cycle (--framework) runs every 5 minutes.
 
   1. self-test the MT5 adapter. Missing APIs halt the cycle (fail closed).
   2. read account and open positions. Apply kill switch, drawdown and daily loss guards.
@@ -21,9 +21,11 @@ from algolab.backtest.validate import validation_gate
 from algolab.llm.budget import CachedAnalyst, budget_from_config
 from algolab.live.adapter import AccountState, AdapterError, Mt5Adapter
 from algolab.live.framework_runner import run_framework
+from algolab.live.sizing import lots_from_risk, quote_to_account_rate
 from algolab.llm.ollama_client import OllamaClient
 from algolab import strategy as S
-from algolab.ops import alerts
+from algolab.ops import alerts, journal
+from algolab.ops.risk import check_limits
 from algolab.ops.state import (ROOT, engage_kill, kill_switch_on, now_utc,
                                ops_config, read_json, write_json)
 from algolab.profile import load_profile
@@ -56,21 +58,13 @@ def guard(acct: AccountState, ops: dict) -> tuple[bool, str]:
     if acct.open_positions is None:
         return False, "open positions unknown (MT5 terminal did not answer) - failing closed"
 
-    r = ops["risk"]
-    today = now_utc().date().isoformat()
-    risk = read_json("risk.json", {})
-    peak = max(float(risk.get("peak", acct.equity)), acct.equity)
-    day_start = float(risk["day_start"]) if risk.get("day") == today else acct.equity
-
-    if acct.equity <= peak * (1 - r["max_drawdown_kill"]):
-        reason = f"max drawdown {r['max_drawdown_kill']:.0%} breached"
-        engage_kill(reason)
-        alerts.send("KILL SWITCH engaged: " + reason, "CRITICAL")
-        return False, reason
-
-    write_json("risk.json", {"peak": peak, "day": today, "day_start": day_start})
-    if acct.equity <= day_start * (1 - r["max_daily_loss"]):
-        return False, "daily loss limit reached"
+    ok_r, why_r, breach = check_limits(acct.equity, ops["risk"])
+    if breach:
+        engage_kill(why_r)
+        alerts.send("KILL SWITCH engaged: " + why_r, "CRITICAL")
+        return False, why_r
+    if not ok_r:
+        return False, why_r
     if acct.open_positions >= LIVE["max_open_trades"]:
         return False, "max open trades reached"
     return True, "ok"
@@ -108,13 +102,15 @@ def ml_accepts(hit: dict, df: pd.DataFrame, p: dict) -> bool:
     return float(M.proba(model, row)[0]) >= thr
 
 
-def plan_trade(df: pd.DataFrame, info: dict, equity: float) -> dict | None:
+def plan_trade(df: pd.DataFrame, info: dict, equity: float, rate: float) -> dict | None:
+    """rate = account currency per unit of the pair's quote currency (1.0 for USD-quoted pairs)."""
     a = float(atr(df, LIVE["atr_n"]).iloc[-2])          # last closed bar
     if not a > 0:
         return None
     sl_dist, tp_dist = LIVE["sl_mult"] * a, LIVE["tp_mult"] * a
-    raw = equity * LIVE["risk_per_trade"] / (sl_dist * info["contract_size"])
-    lots = min(math.floor(raw * 100) / 100, LIVE["max_lots"])
+    risk_money = equity * LIVE["risk_per_trade"]
+    lots = lots_from_risk(risk_money, sl_dist, info["contract_size"], rate, LIVE["max_lots"],
+                          volume_step=0.01)
     if lots < info["volume_min"]:
         return None                                      # risk too small for broker minimum
     return {"sl_dist": sl_dist, "tp_dist": tp_dist, "lots": round(lots, 2)}
@@ -169,6 +165,7 @@ async def cycle() -> dict:
             budget_from_config())
         seen = read_json("seen_signals.json", {})
         open_now = acct.open_positions
+        account_ccy = ad.account_currency()
 
         for hit in hits:
             key = f'{hit["symbol"]}|{hit["side"]}|{hit["time"]}'
@@ -188,7 +185,11 @@ async def cycle() -> dict:
                 log.info("ML filter rejected %s %s", hit["symbol"], hit["side"])
                 continue
             info = ad.symbol_info(hit["symbol"])
-            plan = plan_trade(df, info, acct.equity)
+            rate = quote_to_account_rate(ad, hit["symbol"], account_ccy)
+            if rate is None:
+                log.warning("skip %s: no %s conversion pair (fail closed)", hit["symbol"], account_ccy)
+                continue
+            plan = plan_trade(df, info, acct.equity, rate)
             if plan is None:
                 log.info("skip %s: size below broker minimum", hit["symbol"])
                 continue
@@ -196,6 +197,9 @@ async def cycle() -> dict:
             result = execute(ad, hit, plan, info, p["dry_run"])
             if result["executed"]:
                 open_now += 1
+                journal.record_open(source="legacy", strategy="engulfing", symbol=result["symbol"],
+                                    side=result["side"], ticket=result.get("ticket"), lots=result["lots"],
+                                    entry=result["entry"], sl=result["sl"], tp=result["tp"])
             report["results"].append({**result, "reason": verdict.get("reason", "")})
             mode = "DRY RUN" if p["dry_run"] else "LIVE"
             alerts.send(f'{result["symbol"]} {result["side"]} {result["lots"]} lots | '
@@ -205,6 +209,17 @@ async def cycle() -> dict:
     write_json("live_last_cycle.json", report)
     log.info("cycle done: %d result(s)", len(report["results"]))
     return report
+
+
+def _journal_framework(fw: dict) -> None:
+    for rec in fw.get("results", []):
+        if rec.get("executed"):
+            journal.record_open(source="framework", strategy=rec["strategy"], symbol=rec["symbol"],
+                                side=rec["side"], ticket=rec.get("ticket"), lots=rec["lots"],
+                                entry=float(rec.get("fill_price") or rec.get("entry") or 0.0),
+                                sl=rec["sl"], tp=rec.get("tp") or None)
+    for ev in fw.get("events", []):
+        journal.record_close(ev)
 
 
 async def framework_cycle() -> dict:
@@ -230,6 +245,7 @@ async def framework_cycle() -> dict:
         fw = await run_framework(ad, p, symbols, acct.equity)
         if fw is not None:
             report["framework"] = fw
+            _journal_framework(fw)
     write_json("framework_last_cycle.json", report)
     return report
 

@@ -24,7 +24,8 @@ from algolab.framework.ocl import OclKeylevel
 from algolab.framework.prop import ACTIVE, FAILED, PROP_CONFIG, PROP_STATE, PropGuard, guard_from_config, utc_naive
 from algolab.live import positions
 from algolab.live.adapter import AdapterError
-from algolab.ops import alerts
+from algolab.live.sizing import quote_to_account_rate
+from algolab.ops import alerts, journal
 from algolab.ops.state import now_utc, read_json, write_json
 from algolab.profile import ROOT
 
@@ -42,24 +43,6 @@ def load_prop_config() -> dict:
     if not PROP_CONFIG.exists():
         return {"enabled": False}
     return json.loads(PROP_CONFIG.read_text())
-
-
-def quote_to_account_rate(ad, symbol: str, account: str) -> float | None:
-    """Account currency per 1 unit of the pair's QUOTE currency. None if no conversion pair exists.
-    EURUSD on a USD account -> 1.0. USDJPY on a USD account -> 1 / USDJPY mid (JPY quote)."""
-    base, suffix = symbol[:6], symbol[6:]
-    quote = base[3:6]
-    if quote == account:
-        return 1.0
-    for pair, invert in ((account + quote, True), (quote + account, False)):
-        try:
-            t = ad.tick(pair + suffix)
-        except AdapterError:
-            continue
-        mid = (t["bid"] + t["ask"]) / 2
-        if mid > 0:
-            return 1.0 / mid if invert else mid
-    return None
 
 
 def make_sizer(ad, equity: float, cfg: dict, account_ccy: str = "USD",
@@ -129,8 +112,17 @@ def build_bot(ad, p: dict, symbols: list[str], equity: float, cfg: dict, account
     bot = Bot(adapter=ad, dry_run=p["dry_run"], max_open=cfg["max_open"],
               magic=cfg["magic"], deviation=cfg["deviation_points"],
               sizer=make_sizer(ad, equity, cfg, account_ccy, guard, now, open_count))
-    if guard is not None:
-        bot.gate = lambda rec: guard.check_entry(now, equity, open_count(), 0.0)
+    prev_gate = bot.gate
+    gate_ok, gate_why = journal.entry_gate(cfg.get("entry_gate"))
+
+    def combined_gate(rec: dict) -> tuple[bool, str]:
+        if not gate_ok:
+            return False, gate_why
+        if guard is not None:
+            return guard.check_entry(now, equity, open_count(), 0.0)
+        return prev_gate(rec) if prev_gate else (True, "ok")
+
+    bot.gate = combined_gate
     saved = read_json(STRATEGY_STATE, {})
     objs: dict[tuple[str, str], object] = {}
 

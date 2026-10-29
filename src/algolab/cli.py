@@ -8,6 +8,7 @@
   algolab status      one-screen summary
   algolab kill        stop all trading now
   algolab resume      allow trading again (after you have reviewed the cause)
+  algolab sealed      one-time test on the sealed final slice (never used by the optimizer)
 """
 from __future__ import annotations
 
@@ -32,8 +33,11 @@ def cmd_doctor(_) -> int:
     p = load_profile()
     rows: list[tuple[bool, str, str]] = []
     rows.append((sys.version_info >= (3, 13), "python >= 3.13", sys.version.split()[0]))
-    ver = _installed_version()
-    rows.append((ver != "not installed", "MetaTrader5 package (Windows)", ver))
+    if sys.platform == "win32":
+        ver = _installed_version()
+        rows.append((ver != "not installed", "MetaTrader5 package (Windows)", ver))
+    else:
+        rows.append((True, "MetaTrader5 package (Windows only)", "not required on this OS"))
     for f in REQUIRED_CONFIG:
         rows.append(((root / f).exists(), f, "found" if (root / f).exists() else "missing"))
     rows.append((bool(p["ollama"]["url"]), "OLLAMA_URL set", p["ollama"]["url"] or "not set"))
@@ -43,6 +47,9 @@ def cmd_doctor(_) -> int:
     rows.append((csvs > 0, "market data files", f"{csvs} csv"))
     ok_v, why_v = validation_gate()
     rows.append((ok_v, "strategy validation", why_v))
+    from algolab.optimize.autotune import framework_drift
+    drift = framework_drift()
+    rows.append((not drift, "framework params match strategy", "; ".join(drift) or "in sync"))
     rows.append((p["dry_run"], "DRY_RUN (safe default is true)",
                  "true" if p["dry_run"] else "FALSE - live orders enabled"))
 
@@ -71,6 +78,14 @@ def cmd_validate(_) -> int:
     print(json.dumps({"passed": r["passed"], "reasons": r["reasons"],
                       "aggregate": r["aggregate"],
                       "positive_fold_ratio": r["positive_fold_ratio"]}, indent=2))
+    return 0 if r["passed"] else 2
+
+
+def cmd_sealed(args) -> int:
+    from algolab.optimize.autotune import run_sealed_test
+    r = run_sealed_test(force=getattr(args, "force", False))
+    print(json.dumps({"passed": r["passed"], "already_run": r.get("already_run", False),
+                      "reasons": r["reasons"], "metrics": r.get("metrics")}, indent=2, default=str))
     return 0 if r["passed"] else 2
 
 
@@ -121,6 +136,7 @@ def cmd_resume(_) -> int:
 
 
 COMMANDS = {"doctor": cmd_doctor, "backtest": cmd_backtest, "validate": cmd_validate,
+            "sealed": cmd_sealed,
             "optimize": cmd_optimize, "dashboard": cmd_dashboard, "status": cmd_status,
             "kill": cmd_kill, "resume": cmd_resume}
 
@@ -128,6 +144,8 @@ COMMANDS = {"doctor": cmd_doctor, "backtest": cmd_backtest, "validate": cmd_vali
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="algolab", description="AlgoLab command line")
     parser.add_argument("command", choices=list(COMMANDS))
+    parser.add_argument("--force", action="store_true",
+                        help="sealed: run again for the same parameters (weakens the sealed test)")
     args = parser.parse_args(argv)
     return COMMANDS[args.command](args)
 
