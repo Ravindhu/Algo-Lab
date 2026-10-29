@@ -3,7 +3,7 @@
   "data_dir": "data",
   "dry_run": true,
   "ollama": {"url": "http://localhost:11434", "model": "llama3.1:8b"},
-  "scanner": {"htf": "H4", "rsi_n": 14, "oversold": 30, "overbought": 70},
+  "scanner": {"htf": "H4", "rsi_n": 9, "ema_n": 3},
   "risk": {"max_open_trades": 3},
   "analyst": {"min_confidence": 0.6},
   "mcp": {"transport": "stdio", "host": "127.0.0.1", "port": 8765}

@@ -12,7 +12,7 @@ from mcp.server.fastmcp import FastMCP
 from algolab.agent.multi_agent import Orchestrator
 from algolab.llm.ollama_client import OllamaClient
 from algolab.profile import load_profile
-from algolab.scanner.scanner import scan_all
+from algolab.signals.engulfing import scan_all
 
 profile = load_profile()
 mcp = FastMCP("algolab", host=profile["mcp"]["host"], port=profile["mcp"]["port"])

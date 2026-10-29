@@ -1,7 +1,6 @@
 {
-  "rsi_n": 14,
-  "oversold": 30.0,
-  "overbought": 70.0,
+  "rsi_n": 9,
+  "ema_n": 3,
   "atr_n": 14,
   "sl_mult": 1.5,
   "tp_mult": 3.0,

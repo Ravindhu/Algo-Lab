@@ -8,7 +8,7 @@ description: Run, extend or debug AlgoLab's frontline multi-agent pipeline (HTF 
 ## Agents (in order)
 | Agent | File | Job |
 |---|---|---|
-| ScannerAgent | `src/algolab/scanner/scanner.py` | Finds HTF engulfing candles with RSI in the oversold (BUY) or overbought (SELL) zone, on the last closed bar. |
+| ScannerAgent | `src/algolab/signals/engulfing.py` | Finds HTF engulfing candles confirmed by the Hilega-Milega RSI/EMA rule, on the last closed bar. |
 | RiskAgent | `src/algolab/agent/multi_agent.py` | Limits candidates to the free open-trade slots (`risk.max_open_trades`). |
 | AnalystAgent | same file | Sends each candidate to Ollama. Expects JSON `{decision, confidence, reason}`. Unparseable output becomes SKIP. |
 
@@ -29,7 +29,7 @@ ALGOLAB_PROFILE=local python -m algolab.mcp.server
 ALGOLAB_PROFILE=vps python -m algolab.mcp.server
 
 # one-off scan
-python -m algolab.scanner.scanner H4
+python -m algolab.signals.engulfing H4
 ```
 
 ## Extend

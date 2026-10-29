@@ -51,12 +51,12 @@ def test_dataset_aligns_features_to_trades():
 
 def test_strategy_write_and_restore(tmp_path, monkeypatch):
     cfg = tmp_path / "strategy.json"
-    cfg.write_text(json.dumps({"rsi_n": 14, "oversold": 30.0, "overbought": 70.0, "atr_n": 14,
+    cfg.write_text(json.dumps({"rsi_n": 14, "ema_n": 3, "atr_n": 14,
                                "sl_mult": 1.5, "tp_mult": 3.0, "ml_threshold": 0.0,
                                "version": 1, "updated": None, "reason": "test"}))
     monkeypatch.setattr(S, "FILE", cfg)
     monkeypatch.setattr(S, "STATE_DIR", tmp_path / "state")
-    backup = S.write({"rsi_n": 12, "oversold": 28.0, "overbought": 72.0, "atr_n": 10,
+    backup = S.write({"rsi_n": 12, "ema_n": 2, "atr_n": 10,
                       "sl_mult": 1.2, "tp_mult": 2.5, "ml_threshold": 0.55}, reason="test")
     assert S.load()["version"] == 2
     assert S.params().rsi_n == 12

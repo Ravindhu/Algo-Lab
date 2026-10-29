@@ -1,0 +1,12 @@
+# Demo plugin (not enabled by default): a 20-bar breakout on M15.
+{
+  "type": "breakout_example",
+  "enabled": false,
+  "params": {
+    "timeframe": "M15",
+    "lookback": 20,
+    "atr_period": 14,
+    "sl_mult": 1.5,
+    "tp_mult": 3.0
+  }
+}

@@ -28,8 +28,7 @@ Then, on either machine:
 
 | Job | Command | Every |
 |---|---|---|
-| Legacy live cycle (engulfing + RSI + analyst) | `python -m algolab.live.pipeline` | 15 min |
-| Framework cycle (OCL, scalp, prop rules) | `python -m algolab.live.pipeline --framework` | 5 min |
+| Framework cycle (scalp, engulfing, OCL, prop rules) | `python -m algolab.live.pipeline --framework` | 5 min |
 | Alert-only scan (VPS) | `python -m algolab.ops.pipeline` | 15 min |
 | Autotune | `algolab optimize` | on demand |
 
@@ -71,18 +70,19 @@ src/algolab/
   profile.py             loads config/profiles and .env
   strategy.py            live strategy parameters (config/strategy.json)
   hilega_milega.py       ATR and shared indicator helpers
-  scanner/scanner.py     HTF engulfing + RSI signal (shared by live and backtest)
+  signals/engulfing.py   HTF engulfing + Hilega-Milega signal rule (shared by live and backtest)
   backtest/engine.py     bar simulation with spread, commission, ATR stops
   backtest/validate.py   out-of-sample gate -> reports/validation.json
   optimize/autotune.py   Optuna + ML search, sealed split, holdout ledger, framework sync
-  framework/             OCL, scalp, multi-timeframe strategies, bot, prop rules, protect, Monte Carlo, e2e replay
+  framework/             Bot, prop rules, protect, Monte Carlo, e2e replay
+  framework/strategies/  all strategies: scalp, engulfing, OCL + their base classes
   ml/                    features and model for the optional ML filter
   memory/store.py        agent memory (working, calibration, mistake)
   llm/budget.py          token budget and cache
   llm/ollama_client.py   remote Ollama client (URL + key)
-  agent/multi_agent.py   scanner -> risk -> analyst pipeline (alert-only path)
+  agent/multi_agent.py   signal scan -> risk -> analyst pipeline (alert-only path)
   live/adapter.py        the only module that talks to MetaTrader5 (official package)
-  live/pipeline.py       live cycle (guards, sizing, orders behind DRY_RUN) and framework cycle
+  live/pipeline.py       live framework cycle (guards, Bot, orders behind DRY_RUN)
   live/sizing.py         shared account-currency conversion and lot sizing
   live/framework_runner.py  connects the framework bot to the live cycle
   bridge/windows_sync.py Windows -> VPS data and account sync

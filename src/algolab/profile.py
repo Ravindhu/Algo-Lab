@@ -23,6 +23,6 @@ def load_profile(name: str | None = None) -> dict:
     p["dry_run"] = os.getenv("DRY_RUN", str(p["dry_run"])).lower() == "true"
     # Strategy parameters live in config/strategy.json, the single source of truth.
     strat = json.loads((ROOT / "config" / "strategy.json").read_text())
-    p["scanner"].update({k: strat[k] for k in ("rsi_n", "oversold", "overbought")})
+    p["scanner"].update({k: strat[k] for k in ("rsi_n", "ema_n") if k in strat})
     p["strategy"] = strat
     return p

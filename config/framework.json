@@ -23,6 +23,50 @@
       }
     },
     {
+      "type": "engulfing",
+      "params": {
+        "timeframe": "H4",
+        "rsi_period": 9,
+        "ema_period": 3
+      }
+    },
+    {
+      "type": "ocl_sell_fail_top",
+      "enabled": false,
+      "reason": "sell-failure TOP: 2 key levels (broken C3 open tier 1, C2 open tier 2)",
+      "params": {
+        "htf": "15minute",
+        "ltf": "5minute",
+        "min_body_pct_c23": 0.5,
+        "max_window": 30,
+        "max_ltf_retries": 3,
+        "target_rr": 3.0,
+        "exit_mode": "AUTO",
+        "disaster_stop_atr": 1.0,
+        "max_spread_atr": 0.25,
+        "lookback": 120,
+        "round_trip_cost_pips": 1.5
+      }
+    },
+    {
+      "type": "ocl_sell_fail_bottom",
+      "enabled": false,
+      "reason": "sell-failure BOTTOM: 1 key level (lowest swing candle open), run after TOP fails",
+      "params": {
+        "htf": "15minute",
+        "ltf": "5minute",
+        "min_body_pct_c23": 0.5,
+        "max_window": 30,
+        "max_ltf_retries": 3,
+        "target_rr": 3.0,
+        "exit_mode": "AUTO",
+        "disaster_stop_atr": 1.0,
+        "max_spread_atr": 0.25,
+        "lookback": 120,
+        "round_trip_cost_pips": 1.5
+      }
+    },
+    {
       "type": "ocl",
       "params": {
         "htf": "15minute",

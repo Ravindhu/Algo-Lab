@@ -3,8 +3,9 @@ FILL bars never touch the 1.082 trigger level, so each LTF frame has its own dec
 import pandas as pd
 import pytest
 
-from algolab.framework.multi import MultiTimeframeStrategy
-from algolab.framework.ocl import SOURCE_TF, OclKeylevel, OclParams, SetupState, hm_bullish, map_timeframe
+from algolab.framework.strategies.multi import MultiTimeframeStrategy
+from algolab.framework.strategies.ocl import (SOURCE_TF, OclKeylevel, OclParams, SetupState,
+                                              hm_bullish, map_timeframe)
 
 FILL = (1.090, 1.091, 1.089, 1.090)
 FORMING = (1.0, 1.0, 1.0, 1.0)

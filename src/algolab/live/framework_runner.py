@@ -18,10 +18,10 @@ import logging
 import math
 from datetime import datetime
 
-from algolab.framework import Bot, EngulfingRsiStrategy, ForexSymbol, ScalpTrader, TimeFrame
-from algolab.framework.multi import MultiTimeframeStrategy
-from algolab.framework.ocl import OclKeylevel
+from algolab.framework import Bot, ForexSymbol, TimeFrame
 from algolab.framework.prop import ACTIVE, FAILED, PROP_CONFIG, PROP_STATE, PropGuard, guard_from_config, utc_naive
+from algolab.framework.strategies import MultiTimeframeStrategy
+from algolab.framework.strategies import registry
 from algolab.live import positions
 from algolab.live.adapter import AdapterError
 from algolab.live.sizing import quote_to_account_rate
@@ -30,7 +30,9 @@ from algolab.ops.state import now_utc, read_json, write_json
 from algolab.profile import ROOT
 
 log = logging.getLogger("algolab.framework")
-STRATEGY_TYPES = {"scalp": ScalpTrader, "engulfing": EngulfingRsiStrategy, "ocl": OclKeylevel}
+STRATEGY_TYPES = {"scalp": "scalp_trend_pullback", "engulfing": "engulfing_hm",
+                  "ocl": "ocl_keylevel", "ocl_sell_fail_top": "ocl_sell_fail_top",
+                  "ocl_sell_fail_bottom": "ocl_sell_fail_bottom"}
 STRATEGY_STATE = "framework_strategies.json"
 POSITIONS_STATE = "framework_positions.json"
 
@@ -154,13 +156,23 @@ def build_bot(ad, p: dict, symbols: list[str], equity: float, cfg: dict, account
 
     bot.on_signal = notify
     for entry in cfg["strategies"]:
-        cls = STRATEGY_TYPES[entry["type"]]
-        params = entry.get("params", {})
+        if not registry.enabled(entry):
+            log.info("strategy %s disabled in config; skipped", entry.get("type"))
+            continue
+        try:
+            cls = registry.load(STRATEGY_TYPES.get(entry["type"], entry["type"]))
+        except KeyError as e:
+            log.error("%s; entry skipped", e)
+            alerts.send(f"framework: unknown strategy type {entry.get('type')!r} (skipped)",
+                        "WARNING", key=f"fw-unknown-{entry.get('type')}", cooldown_min=1440)
+            continue
+        params = dict(entry.get("params", {}))
+        strategy_tf = params.pop("timeframe", tf)
         for s in symbols:
             if issubclass(cls, MultiTimeframeStrategy):
                 obj = cls(ForexSymbol(s), **params)
             else:
-                obj = cls(ForexSymbol(s), tf, **params)
+                obj = cls(ForexSymbol(s), strategy_tf, **params)
             objs[(obj.name, s)] = obj
             if isinstance(obj, MultiTimeframeStrategy) and _key(obj.name, s) in saved:
                 obj.restore(saved[_key(obj.name, s)])

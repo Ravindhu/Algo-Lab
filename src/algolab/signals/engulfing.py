@@ -1,8 +1,10 @@
-"""Scan all forex pairs for higher-timeframe engulfing candles.
+"""Signal rules shared by every consumer (framework strategies, backtest, alert tools).
 
 Rules (last CLOSED bar):
-  BUY  : bullish engulfing AND RSI below the oversold level
-  SELL : bearish engulfing AND RSI above the overbought level
+  BUY  : bullish engulfing AND RSI above EMA(RSI) (Hilega-Milega)
+  SELL : bearish engulfing AND RSI below EMA(RSI) (Hilega-Milega)
+
+Pure math only: no broker calls, no orders, no file writes (except the CLI helper below).
 """
 import json
 import sys
@@ -11,17 +13,22 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from algolab.hilega_milega import ema, hilega_milega_rsi
 from algolab.profile import ROOT, load_profile
 
 
-def rsi(close: pd.Series, n: int = 14) -> pd.Series:
-    d = close.diff()
-    up = d.clip(lower=0).ewm(alpha=1 / n, adjust=False).mean()
-    dn = (-d.clip(upper=0)).ewm(alpha=1 / n, adjust=False).mean()
-    return 100 - 100 / (1 + up / dn.replace(0, np.nan))
+def hm_confirmed(closes: list[float], rsi_period: int = 9, ema_period: int = 3) -> int | None:
+    """Hilega-Milega direction: +1 when RSI is above EMA(RSI), -1 when below, None when unknown."""
+    rsi_values = hilega_milega_rsi(closes, rsi_period=rsi_period)
+    line = ema(rsi_values, ema_period)
+    r, e = rsi_values[-1] if rsi_values else None, line[-1] if line else None
+    if r is None or e is None:
+        return None
+    return 1 if r > e else (-1 if r < e else None)
 
 
 def engulfing(df: pd.DataFrame) -> pd.Series:
+    """+1 bullish engulfing, -1 bearish engulfing, 0 none (evaluated per bar)."""
     o, c = df["open"], df["close"]
     po, pc = o.shift(), c.shift()
     bull = (pc < po) & (c > o) & (o <= pc) & (c >= po)
@@ -30,23 +37,27 @@ def engulfing(df: pd.DataFrame) -> pd.Series:
 
 
 def scan_frame(symbol: str, df: pd.DataFrame, cfg: dict) -> dict | None:
-    if len(df) < cfg["rsi_n"] + 3:
+    """One symbol's candles -> a signal dict for the last closed bar, or None."""
+    rsi_period = int(cfg.get("hm_rsi_period", 9))
+    ema_period = int(cfg.get("hm_ema_period", 3))
+    if len(df) < max(rsi_period + ema_period + 3, 5):
         return None
     df = df.copy()
-    df["rsi"] = rsi(df["close"], cfg["rsi_n"])
     df["eng"] = engulfing(df)
     bar = df.iloc[-2]                      # last closed bar, not the forming one
-    if bar["eng"] > 0 and bar["rsi"] < cfg["oversold"]:
+    conf = hm_confirmed([float(x) for x in df["close"]], rsi_period, ema_period)
+    if bar["eng"] > 0 and conf == 1:
         side = "BUY"
-    elif bar["eng"] < 0 and bar["rsi"] > cfg["overbought"]:
+    elif bar["eng"] < 0 and conf == -1:
         side = "SELL"
     else:
         return None
     return {"symbol": symbol, "side": side, "time": str(df.index[-2]),
-            "rsi": round(float(bar["rsi"]), 2), "close": float(bar["close"])}
+            "close": float(bar["close"])}
 
 
 def scan_all(htf: str | None = None, data_dir: str | Path | None = None) -> list[dict]:
+    """Offline helper: scan exported CSV files (alert tools, agent pipeline, MCP server)."""
     p = load_profile()
     cfg = p["scanner"]
     htf = htf or cfg["htf"]

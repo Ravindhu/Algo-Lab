@@ -10,7 +10,7 @@ from abc import abstractmethod
 
 import pandas as pd
 
-from algolab.framework.strategy import Strategy
+from algolab.framework.strategies.base import Strategy
 
 
 def closed(df: pd.DataFrame) -> pd.DataFrame:

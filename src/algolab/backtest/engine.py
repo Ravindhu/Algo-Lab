@@ -1,6 +1,7 @@
-"""Backtest with the SAME rule the live scanner uses: higher-timeframe engulfing + RSI filter,
-ATR stop and target, spread and commission. Entry is at the next bar's open. One position at a time.
-If stop and target are both inside one bar, the stop is assumed first (conservative)."""
+"""Backtest with the SAME rule the live scanner uses: higher-timeframe engulfing confirmed by
+Hilega-Milega RSI/EMA direction, ATR stop and target, spread and commission. Entry is at the next
+bar's open. One position at a time. If stop and target are inside one bar, the stop is assumed first.
+"""
 from __future__ import annotations
 
 import math
@@ -11,14 +12,13 @@ import numpy as np
 import pandas as pd
 
 from algolab.profile import ROOT
-from algolab.scanner.scanner import engulfing, rsi
+from algolab.signals.engulfing import engulfing, hm_confirmed
 
 
 @dataclass(frozen=True)
 class Params:
-    rsi_n: int = 14
-    oversold: float = 30.0
-    overbought: float = 70.0
+    rsi_n: int = 9
+    ema_n: int = 3
     atr_n: int = 14
     sl_mult: float = 1.5
     tp_mult: float = 3.0
@@ -57,10 +57,12 @@ def atr(df: pd.DataFrame, n: int) -> pd.Series:
 
 def signals(df: pd.DataFrame, p: Params) -> np.ndarray:
     eng = engulfing(df).to_numpy()
-    r = rsi(df["close"], p.rsi_n).to_numpy()
+    conf = hm_confirmed([float(x) for x in df["close"]], p.rsi_n, p.ema_n)
     sig = np.zeros(len(df), dtype=int)
-    sig[(eng > 0) & (r < p.oversold)] = 1
-    sig[(eng < 0) & (r > p.overbought)] = -1
+    if conf is None:
+        return sig
+    sig[(eng > 0) & (conf == 1)] = 1
+    sig[(eng < 0) & (conf == -1)] = -1
     return sig
 
 

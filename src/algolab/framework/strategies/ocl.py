@@ -37,7 +37,7 @@ from typing import Any, NamedTuple, Optional
 
 import pandas as pd
 
-from algolab.framework.multi import MultiTimeframeStrategy, closed
+from algolab.framework.strategies.multi import MultiTimeframeStrategy, closed
 from algolab.framework.protect import Protection
 from algolab.framework.timeframe import TimeFrame
 from algolab.hilega_milega import atr as atr_series
@@ -346,3 +346,7 @@ class OclKeylevel(MultiTimeframeStrategy):
         a = atr_series(highs, lows, closes, period=self.p.atr_period)[-1]
         r = hilega_milega_rsi(closes, rsi_period=self.p.rsi_period)[-1]
         return a, r
+
+
+# Plugin registry export (framework_runner loads strategies by name through this).
+STRATEGY = OclKeylevel

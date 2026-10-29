@@ -104,10 +104,9 @@ def _inner_score(tr: pd.DataFrame, feats, thr: float, cfg: dict):
 def _objective(search, c: Costs, cfg: dict):
     def objective(trial) -> float:
         p = Params(
-            rsi_n=trial.suggest_int("rsi_n", 10, 21),
+            rsi_n=trial.suggest_int("rsi_n", 5, 14),
+            ema_n=trial.suggest_int("ema_n", 2, 5),
             atr_n=trial.suggest_int("atr_n", 7, 21),
-            oversold=trial.suggest_float("oversold", 20.0, 40.0),
-            overbought=trial.suggest_float("overbought", 60.0, 80.0),
             sl_mult=trial.suggest_float("sl_mult", 0.8, 2.5),
             tp_mult=trial.suggest_float("tp_mult", 1.5, 4.5),
         )

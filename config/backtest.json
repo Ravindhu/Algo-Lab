@@ -1,5 +1,5 @@
 {
-  "params": {"rsi_n": 14, "oversold": 30.0, "overbought": 70.0, "atr_n": 14, "sl_mult": 1.5, "tp_mult": 3.0},
+  "params": {"rsi_n": 9, "ema_n": 3, "atr_n": 14, "sl_mult": 1.5, "tp_mult": 3.0},
   "costs": {"initial_balance": 10000.0, "spread": 0.00012, "commission_per_lot": 3.5,
             "contract_size": 100000.0, "risk_per_trade": 0.01, "max_lots": 1.0}
 }

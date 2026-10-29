@@ -92,7 +92,7 @@ def overview(s: dict) -> list:
         _card("Strategy validation", "PASSED" if val.get("passed") else "NOT PASSED",
               "; ".join(val.get("reasons", [])) or "run: algolab validate"),
         _card("Live parameters", f"v{st.get('version', '-')}",
-              f"RSI {st.get('rsi_n')} OS {st.get('oversold')} OB {st.get('overbought')} "
+              f"RSI {st.get('rsi_n')} EMA {st.get('ema_n')} "
               f"SL {st.get('sl_mult')}xATR TP {st.get('tp_mult')}xATR ML {st.get('ml_threshold')}"),
         _card("Last autotune", "APPLIED" if at.get("applied") else
               ("ROLLED BACK" if at.get("rolled_back") else ("kept" if at else "never")),
@@ -195,8 +195,7 @@ def opt_figure(metric: str) -> go.Figure:
         return go.Figure().update_layout(template="plotly_dark", height=620,
                                          title="No tuning run yet: algolab optimize")
     df = pd.DataFrame(trials)
-    text = [f"score {r.score}<br>trades {r.trades}<br>RSI {r.rsi_n} ATR {r.atr_n}"
-            f"<br>OS {round(r.oversold, 1)} OB {round(r.overbought, 1)}"
+    text = [f"score {r.score}<br>trades {r.trades}<br>RSI {r.rsi_n} EMA {r.ema_n} ATR {r.atr_n}"
             f"<br>ML {r.ml_threshold}" for r in df.itertuples()]
     fig = go.Figure(go.Scatter3d(
         x=df["tp_mult"], y=df["sl_mult"], z=df[metric], mode="markers", text=text,

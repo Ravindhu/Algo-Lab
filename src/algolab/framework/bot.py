@@ -16,8 +16,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from algolab.framework.multi import MultiTimeframeStrategy
-from algolab.framework.strategy import Strategy
+from algolab.framework.strategies import MultiTimeframeStrategy, Strategy
 
 log = logging.getLogger("algolab.bot")
 REQUIRED_ORDER_KEYS = ("lots", "sl", "tp")

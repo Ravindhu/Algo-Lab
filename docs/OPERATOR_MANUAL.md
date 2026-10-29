@@ -120,12 +120,12 @@ Trades tab reads it. The framework's entry gate uses the closed trades: after `w
 and before `min_trades` closes, entries are allowed. After that, entries need the lower bound of the recent
 win rate to clear `min_lower_bound` (0.25 is the breakeven win rate for a 3R target, before costs).
 
-Legacy engulfing trades are recorded as opens only. Their broker-side exits are not yet reported back.
+
 
 ## 8. Known limits
 
 - Backtest and e2e results come from synthetic or unvalidated data until a real-history run is recorded here.
-- The optimizer tunes the legacy path. It writes its shared parameters (rsi_n, atr_n, sl_mult, tp_mult) into the framework's scalp strategy. OCL parameters are not optimized.
+- The optimizer tunes the shared backtest rule. It writes its shared parameters (rsi_n, atr_n, sl_mult, tp_mult) into the framework's scalp strategy. OCL parameters are not optimized.
 - `validate` still uses the whole history, including the sealed slice. Only `algolab sealed` is out-of-sample for the optimizer's choices.
 - OCL parameters were ported from a stock-market setup. Touch buffer and round-trip cost now use pips for forex (`round_trip_cost_pips`). Re-derive them from your broker's spread and commission.
 - Monte Carlo assumes independent trades. Real trades cluster, so treat the drawdown numbers as optimistic.

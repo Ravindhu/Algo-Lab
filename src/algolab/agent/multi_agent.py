@@ -5,7 +5,7 @@ import logging
 
 from algolab.llm.ollama_client import OllamaClient
 from algolab.profile import load_profile
-from algolab.scanner.scanner import scan_all
+from algolab.signals.engulfing import scan_all
 
 log = logging.getLogger("algolab.agents")
 

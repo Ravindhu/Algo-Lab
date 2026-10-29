@@ -14,7 +14,7 @@ from algolab.ops.state import STATE_DIR, now_utc
 from algolab.profile import ROOT
 
 FILE = ROOT / "config" / "strategy.json"
-KEYS = ("rsi_n", "oversold", "overbought", "atr_n", "sl_mult", "tp_mult")
+KEYS = ("rsi_n", "ema_n", "atr_n", "sl_mult", "tp_mult")
 
 
 def load() -> dict:

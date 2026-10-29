@@ -15,7 +15,6 @@ Requires: Windows 10/11, internet, and an MT5 broker login (you can finish login
 param(
   [ValidateSet("Standalone", "Vps")] [string]$Mode = "Standalone",
   [ValidateSet("install", "start", "stop", "status", "uninstall")] [string]$Action = "install",
-  [int]$IntervalMinutes = 15,
   [int]$FrameworkMinutes = 5
 )
 
@@ -25,9 +24,8 @@ $Venv = Join-Path $Root ".venv"
 $Py = Join-Path $Venv "Scripts\python.exe"
 $Mt5Exe = "C:\Program Files\MetaTrader 5\terminal64.exe"
 $TaskSync = "AlgoLab-Sync"
-$TaskLive = "AlgoLab-Live"
 $TaskFw = "AlgoLab-Framework"
-$Tasks = @($TaskSync, $TaskLive, $TaskFw)
+$Tasks = @($TaskSync, $TaskFw)
 
 function Step([string]$msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 
@@ -105,11 +103,10 @@ function Register-AlgoTasks {
   $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
   $duration = New-TimeSpan -Days 3650
 
-  # Sync (minute 0), then the full live cycle 4 minutes later. The framework has its own task so a
-  # lower timeframe sees a fresh closed bar every 5 minutes.
+  # Sync (minute 0), then the framework cycle 2 minutes later so a lower timeframe sees a
+  # fresh closed bar every 5 minutes.
   $defs = @(
-    @{ Name = $TaskSync; Args = "-m algolab.bridge.windows_sync";       Start = (Get-Date).AddMinutes(1); Every = $IntervalMinutes },
-    @{ Name = $TaskLive; Args = "-m algolab.live.pipeline";             Start = (Get-Date).AddMinutes(5); Every = $IntervalMinutes },
+    @{ Name = $TaskSync; Args = "-m algolab.bridge.windows_sync";       Start = (Get-Date).AddMinutes(1); Every = $FrameworkMinutes },
     @{ Name = $TaskFw;   Args = "-m algolab.live.pipeline --framework"; Start = (Get-Date).AddMinutes(2); Every = $FrameworkMinutes }
   )
   foreach ($d in $defs) {

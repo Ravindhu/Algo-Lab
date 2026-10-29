@@ -5,10 +5,17 @@ import numpy as np
 import pandas as pd
 
 from algolab.backtest.engine import atr
-from algolab.scanner.scanner import rsi
 
 FEATURES = ["rsi", "rsi_slope", "atr_pct", "ema_gap", "body_ratio", "range_pct",
             "ret5", "ret20", "hour", "dow"]
+
+
+def rsi(close: pd.Series, n: int = 14) -> pd.Series:
+    """Standard Wilder-style RSI used by the ML feature set."""
+    d = close.diff()
+    up = d.clip(lower=0).ewm(alpha=1 / n, adjust=False).mean()
+    dn = (-d.clip(upper=0)).ewm(alpha=1 / n, adjust=False).mean()
+    return 100 - 100 / (1 + up / dn.replace(0, np.nan))
 
 
 def build(df: pd.DataFrame, rsi_n: int = 14, atr_n: int = 14) -> pd.DataFrame:

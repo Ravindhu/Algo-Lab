@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from algolab.framework.strategy import Strategy
-from algolab.scanner.scanner import rsi
+from algolab.framework.strategies.base import Strategy
+from algolab.ml.features import rsi
 
 
 def _atr(df: pd.DataFrame, n: int) -> pd.Series:
@@ -62,3 +62,7 @@ class ScalpTrader(Strategy):
         return {"side": side, "rsi": round(rsi_v, 2), "atr": atr_v,
                 "sl_dist": p["sl_mult"] * atr_v, "tp_dist": p["tp_mult"] * atr_v,
                 "time": str(df.index[i])}
+
+
+# Plugin registry export (framework_runner loads strategies by name through this).
+STRATEGY = ScalpTrader

@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from algolab.backtest.engine import Costs
-from algolab.framework.ocl import OclKeylevel, SetupState
+from algolab.framework.strategies.ocl import OclKeylevel, SetupState
 from algolab.framework.prop import PropGuard
 from algolab.framework.protect import Trade
 from algolab.framework.timeframe import TimeFrame
