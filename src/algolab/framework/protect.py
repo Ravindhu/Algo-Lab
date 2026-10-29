@@ -74,7 +74,7 @@ class Trade:
                 raise ValueError("pip size is required when round_trip_cost_pips is set")
             be_floor = trigger + p.round_trip_cost_pips * pip
         else:
-            be_floor = trigger * (1.0 + p.round_trip_cost_pct / 100.0)
+            be_floor = trigger + abs(trigger) * p.round_trip_cost_pct / 100.0
         return cls(side=1, entry=entry, trigger=trigger, htf_sl=htf_sl, stop=htf_sl,
                    broker_sl=broker_sl, tp=tp, risk=risk, be_trigger=be_trigger,
                    be_floor=be_floor, best_close=entry)
@@ -99,7 +99,9 @@ class Trade:
             self.stop = max(self.stop, self.be_floor)
         self.best_close = max(self.best_close, close)
         if p.atr_trail_enabled and atr is not None and atr > 0:
-            candidate = max(self.best_close - p.atr_multiplier * atr, 0.0)
+            candidate = self.best_close - p.atr_multiplier * atr
+            if self.best_close > 0:                      # a real price cannot trail below zero
+                candidate = max(candidate, 0.0)
             new_trail = max(candidate, self.stop, self.htf_sl)
             if self.trail is None or new_trail > self.trail:
                 self.trail = new_trail

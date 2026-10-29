@@ -50,7 +50,7 @@ def register(module_name: str, attr: str = "STRATEGY") -> None:
 
 # Built-in plugins. Add one line here OR call register() from the strategy file itself;
 # both work. Keeping the list here makes the full menu visible at a glance.
-for _mod in ("scalp", "engulfing_strategy", "ocl", "ocl_sell_fail", "breakout_example"):
+for _mod in ("scalp", "engulfing_strategy", "ocl", "ocl_sell_fail", "ocl_inverse", "engulfing_ocl", "breakout_example"):
     register(_mod)
 
 

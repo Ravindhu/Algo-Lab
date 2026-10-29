@@ -128,21 +128,22 @@ class HandoffStore:
 
     FILE = "framework_handoff.json"
 
-    def __init__(self, read=None, write=None):
+    def __init__(self, read=None, write=None, scope: str = ""):
         from algolab.ops.state import read_json, write_json
         self._read = read or read_json
         self._write = write or write_json
+        self._scope = scope          # "" for the BUY blueprints, "SELL:" for the inverted ones
 
     def exhausted(self, symbol: str, key: str) -> bool:
         rec = self._read(self.FILE, {})
-        entry = rec.get(symbol, {})
+        entry = rec.get(self._scope + symbol, {})
         return entry.get("key") == key and entry.get("state") == "exhausted"
 
     def mark_exhausted(self, symbol: str, key: str) -> None:
         if not key:
             return
         rec = self._read(self.FILE, {})
-        rec[symbol] = {"key": key, "state": "exhausted"}
+        rec[self._scope + symbol] = {"key": key, "state": "exhausted"}
         self._write(self.FILE, rec)
 
 
@@ -152,11 +153,43 @@ def _lowest_swing(bars: list[Bar], start: int, end: int) -> Bar:
     return min(window, key=lambda b: b.low)
 
 
+class MemoryLog:
+    """In-memory record of exhausted cores, shared by TOP and BOTTOM in a backtest.
+
+    Each mark is stamped with the simulated time it was written at (`clock`, set by the backtest loop). A reader
+    only trusts marks stamped strictly before its own clock, so BOTTOM never uses a TOP exhaustion that the
+    replay would not yet have seen. Nothing is written to disk."""
+
+    def __init__(self) -> None:
+        self.clock = None
+        self.marks: dict[str, list[tuple[str, Any]]] = {}
+
+
+class MemoryHandoff:
+    """Same interface as HandoffStore, backed by a MemoryLog."""
+
+    def __init__(self, log: MemoryLog, scope: str = "") -> None:
+        self._log = log
+        self._scope = scope
+
+    def exhausted(self, symbol: str, key: str) -> bool:
+        for mark_key, at in self._log.marks.get(self._scope + symbol, []):
+            if mark_key == key and (at is None or self._log.clock is None or at < self._log.clock):
+                return True
+        return False
+
+    def mark_exhausted(self, symbol: str, key: str) -> None:
+        if not key:
+            return
+        self._log.marks.setdefault(self._scope + symbol, []).append((key, self._log.clock))
+
+
 class OclSellFailBase(MultiTimeframeStrategy):
     """Shared engine for the two sell-failure blueprints. Subclasses set
     `blueprint` ("TOP" or "BOTTOM"); the level bookkeeping differs only there."""
 
     blueprint = "TOP"
+    handoff_scope = ""
 
     def __init__(self, symbol, htf="15minute", ltf="5minute", count=None, **params):
         self.htf_tf = map_timeframe(htf)
@@ -171,6 +204,11 @@ class OclSellFailBase(MultiTimeframeStrategy):
         if not self.p.atr_trail_enabled:
             log.warning("[%s] ATR trail disabled; DYNAMIC exits then rely on the LTF stop only",
                         self.symbol.name)
+
+    def use_memory_handoff(self, log: MemoryLog) -> None:
+        """Backtests only: keep the TOP-to-BOTTOM hand-off in memory instead of the live state file."""
+        self._memory_log = log
+        self._handoff = MemoryHandoff(log, scope=self.handoff_scope)
 
     # ---- subclass hooks --------------------------------------------------
     def _new_state(self) -> dict[str, Any]:
@@ -305,9 +343,9 @@ class OclSellFailBase(MultiTimeframeStrategy):
         if self.p.exit_mode != EXIT_AUTO:
             return self.p.exit_mode
         st = self.st
-        if st["aggressive"] is not None and ref >= st["aggressive"] * 0.995:
+        if st["aggressive"] is not None and ref >= st["aggressive"] - 0.005 * abs(st["aggressive"]):
             return EXIT_FIXED
-        if st["conservative"] is not None and ref <= st["conservative"] * 1.005:
+        if st["conservative"] is not None and ref <= st["conservative"] + 0.005 * abs(st["conservative"]):
             return "DYNAMIC"
         return EXIT_FIXED
 
@@ -323,10 +361,11 @@ class OclSellFailTop(OclSellFailBase):
 
     name = "ocl_sell_fail_top"
     blueprint = "TOP"
+    handoff_scope = ""
 
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
-        self._handoff = HandoffStore()
+        self._handoff = HandoffStore(scope=self.handoff_scope)
 
     def _levels(self, setup: dict[str, Any], bars: list[Bar]) -> tuple[float, float, float, float]:
         # Tier 1 (aggressive BUY) = the broken C3 open; tier 2 (conservative) = C2 open.
@@ -345,10 +384,11 @@ class OclSellFailBottom(OclSellFailBase):
 
     name = "ocl_sell_fail_bottom"
     blueprint = "BOTTOM"
+    handoff_scope = ""
 
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
-        self._handoff = HandoffStore()
+        self._handoff = HandoffStore(scope=self.handoff_scope)
 
     def _levels(self, setup: dict[str, Any], bars: list[Bar]) -> tuple[float, float, float, float]:
         swing = _lowest_swing(bars, setup["core_start"], setup["fail_index"])
