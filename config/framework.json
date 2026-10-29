@@ -23,16 +23,30 @@
       }
     },
     {
-      "type": "engulfing",
+      "type": "engulfing_ocl",
+      "reason": "Engulfing HTF setup (both bodies >50%, HM confirmed, arms the 88.6% fib level) with the OCL LTF entry model (touch, RRG on LTF, LTF HM oversold cap, protections).",
       "params": {
-        "timeframe": "H4",
+        "htf": "H4",
+        "ltf": "M15",
+        "trigger_level_mode": "CONSERVATIVE",
         "rsi_period": 9,
         "ema_period": 3,
-        "fib_pct": 0.886,
         "min_body_pct": 0.5,
-        "max_wait": 5
-      },
-      "reason": "engulfing: both candle bodies >50% of range; entry at 88.6% fib of the engulfing candle, first touch within 5 bars"
+        "fib_pct": 0.886,
+        "oversold": 30.0,
+        "ltf_pattern_enabled": true,
+        "target_rr": 3.0,
+        "exit_mode": "AUTO",
+        "max_ltf_retries": 3,
+        "atr_period": 14,
+        "atr_multiplier": 2.0,
+        "atr_trail_enabled": true,
+        "breakeven_rr": 1.5,
+        "round_trip_cost_pips": 1.5,
+        "disaster_stop_atr": 1.0,
+        "max_spread_atr": 0.25,
+        "lookback": 120
+      }
     },
     {
       "type": "ocl_sell_fail_top",
@@ -162,6 +176,33 @@
         "max_spread_atr": 0.25,
         "lookback": 120,
         "round_trip_cost_pips": 1.5
+      }
+    },
+    {
+      "type": "engulfing_ocl_inv",
+      "enabled": false,
+      "reason": "SELL side of engulfing_ocl (bearish engulfing, fib level above, OCL SELL entry). Off until its backtest passes.",
+      "params": {
+        "htf": "H4",
+        "ltf": "M15",
+        "trigger_level_mode": "CONSERVATIVE",
+        "rsi_period": 9,
+        "ema_period": 3,
+        "min_body_pct": 0.5,
+        "fib_pct": 0.886,
+        "oversold": 30.0,
+        "ltf_pattern_enabled": true,
+        "target_rr": 3.0,
+        "exit_mode": "AUTO",
+        "max_ltf_retries": 3,
+        "atr_period": 14,
+        "atr_multiplier": 2.0,
+        "atr_trail_enabled": true,
+        "breakeven_rr": 1.5,
+        "round_trip_cost_pips": 1.5,
+        "disaster_stop_atr": 1.0,
+        "max_spread_atr": 0.25,
+        "lookback": 120
       }
     }
   ],

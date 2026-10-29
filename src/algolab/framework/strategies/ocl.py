@@ -109,8 +109,15 @@ class OclParams:
     breakeven_rr: float = 1.5
     round_trip_cost_pct: float = 0.20
     round_trip_cost_pips: Optional[float] = None   # forex round-trip cost in pips (preferred)
+    # Engulfing HTF setup only (ignored by the OCL setup)
+    min_body_pct: float = 0.5            # both engulfing candles: body above this share of the range
+    fib_pct: float = 0.886               # level inside the engulfing candle that the LTF entry waits for
 
     def __post_init__(self) -> None:
+        if not 0.0 <= self.min_body_pct < 1.0:
+            raise ValueError("min_body_pct must be within [0, 1)")
+        if not 0.0 < self.fib_pct < 1.0:
+            raise ValueError("fib_pct must be within (0, 1)")
         if self.trigger_level_mode not in (CONSERVATIVE, AGGRESSIVE):
             raise ValueError("trigger_level_mode must be CONSERVATIVE or AGGRESSIVE")
         if self.exit_mode not in (EXIT_AUTO, EXIT_FIXED, EXIT_DYNAMIC):
@@ -242,13 +249,10 @@ class OclKeylevel(MultiTimeframeStrategy):
             return None
 
         if not st.armed:
-            setup = htf_setup(htf, p)
+            setup = self._htf_setup(htf)
             if setup is None:
                 return None
-            if p.hm_enabled and not hm_bullish([float(x) for x in htf["close"]], p, oversold_cap=False):
-                return None
-            need = 4 if p.allow_c4_confirmation else 3
-            key = str(htf.index[-need])
+            key = setup["key"]
             if key in st.used:
                 return None
             st.armed, st.key = True, key
@@ -302,6 +306,18 @@ class OclKeylevel(MultiTimeframeStrategy):
             "max_spread_atr": p.max_spread_atr,
             "time": str(ltf.index[-1]),
         }
+
+    def _htf_setup(self, htf: pd.DataFrame) -> dict[str, Any] | None:
+        """HTF pattern on closed bars (newest last). Returns levels, floor, a confirm label and the pattern key,
+        or None. Subclasses (engulfing) replace this and keep the LTF entry model unchanged."""
+        p = self.p
+        setup = htf_setup(htf, p)
+        if setup is None:
+            return None
+        if p.hm_enabled and not hm_bullish([float(x) for x in htf["close"]], p, oversold_cap=False):
+            return None
+        need = 4 if p.allow_c4_confirmation else 3
+        return {**setup, "key": str(htf.index[-need])}
 
     def exit_check(self, frames: dict[str, pd.DataFrame]) -> bool:
         """True when the last closed HTF bar closed below the floor of an open trade."""

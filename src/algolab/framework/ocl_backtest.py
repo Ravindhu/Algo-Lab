@@ -80,8 +80,11 @@ def run_ocl_backtest(strategy: OclKeylevel, htf: pd.DataFrame, ltf: pd.DataFrame
         strategy.on_exit(reason, stop_close if stop_close is not None else px)
         trade, meta = None, {}
 
+    memory_log = getattr(strategy, "_memory_log", None)     # sell-failure in-memory hand-off, if set
     for i in range(1, len(ltf)):
         bar = i - 1
+        if memory_log is not None:
+            memory_log.clock = times[i]                     # simulated time for every hand-off read and write
         # 1) broker exits during bar i-1
         if trade is not None:
             ev = trade.intrabar_exit(h[bar], l[bar])
@@ -157,19 +160,46 @@ def run_ocl_backtest(strategy: OclKeylevel, htf: pd.DataFrame, ltf: pd.DataFrame
     return pd.DataFrame(trades)
 
 
-def run_inverse_backtest(strategy, htf: pd.DataFrame, ltf: pd.DataFrame, costs: Costs,
-                         quote_to_account: float | pd.Series = 1.0,
-                         prop: PropGuard | None = None) -> pd.DataFrame:
-    """SELL-side backtest of a BUY blueprint. The candles are mirrored (see strategies/ocl_inverse.py), the
-    BUY backtest runs unchanged, and the price columns are mirrored back. P&L is already the short P&L,
-    because the mirror turns a long profit (exit - entry) into entry - exit."""
-    from algolab.framework.strategies.ocl_inverse import mirror_frame
-
-    trades = run_ocl_backtest(strategy, mirror_frame(htf), mirror_frame(ltf), costs,
-                              quote_to_account, prop)
+def _mirror_back(trades: pd.DataFrame) -> pd.DataFrame:
     if len(trades):
         for col in ("entry", "exit", "sl", "tp", "htf_sl", "trail"):
             if col in trades:
                 trades[col] = -pd.to_numeric(trades[col], errors="coerce")
         trades["side"] = "SELL"
     return trades
+
+
+def run_inverse_backtest(strategy, htf: pd.DataFrame, ltf: pd.DataFrame, costs: Costs,
+                         quote_to_account: float | pd.Series = 1.0,
+                         prop: PropGuard | None = None) -> pd.DataFrame:
+    """SELL-side backtest of a BUY blueprint. The candles are mirrored (see strategies/ocl_inverse.py), the
+    BUY backtest runs unchanged, and the price columns are mirrored back. P&L is already the short P&L,
+    because the mirror turns a long profit (exit - entry) into entry - exit. Accepts the inverse wrapper."""
+    from algolab.framework.strategies.ocl_inverse import mirror_frame
+
+    inner = getattr(strategy, "inner", strategy)
+    trades = run_ocl_backtest(inner, mirror_frame(htf), mirror_frame(ltf), costs, quote_to_account, prop)
+    return _mirror_back(trades)
+
+
+def run_sell_fail_pair(top, bottom, htf: pd.DataFrame, ltf: pd.DataFrame, costs: Costs,
+                       quote_to_account: float | pd.Series = 1.0, inverse: bool = False):
+    """Backtest the TOP and BOTTOM blueprints together, sharing an in-memory hand-off.
+
+    BOTTOM arms only a core that TOP has already exhausted, and only once that exhaustion is in the past by the
+    simulated clock. The hand-off is in memory, so the run never writes framework_handoff.json.
+    Pass the inverse wrappers with inverse=True. Returns (top_trades, bottom_trades). No prop guard is applied."""
+    from algolab.framework.strategies.ocl_inverse import mirror_frame
+    from algolab.framework.strategies.ocl_sell_fail import MemoryLog
+
+    t_obj = getattr(top, "inner", top)
+    b_obj = getattr(bottom, "inner", bottom)
+    log = MemoryLog()
+    t_obj.use_memory_handoff(log)
+    b_obj.use_memory_handoff(log)
+    h, l = (mirror_frame(htf), mirror_frame(ltf)) if inverse else (htf, ltf)
+    top_trades = run_ocl_backtest(t_obj, h, l, costs, quote_to_account)
+    bottom_trades = run_ocl_backtest(b_obj, h, l, costs, quote_to_account)
+    if inverse:
+        top_trades, bottom_trades = _mirror_back(top_trades), _mirror_back(bottom_trades)
+    return top_trades, bottom_trades

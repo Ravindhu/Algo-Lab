@@ -5,17 +5,8 @@ import pandas as pd
 
 from algolab.framework.strategies.base import Strategy
 from algolab.hilega_milega import atr as atr_series
-from algolab.signals.engulfing import DEFAULT_MIN_BODY_PCT, engulfing, hm_direction_series
-
-FIB_ENTRY = 0.886   # entry sits 88.6% of the way back into the engulfing candle's range
-
-
-def fib_entry_level(high: float, low: float, direction: int, fib: float = FIB_ENTRY) -> float:
-    """Entry level inside the engulfing (2nd) candle, measured from its extreme in the trade direction.
-    BUY : high - fib * range (a deep pullback from the high).
-    SELL: low  + fib * range (a deep pullback from the low)."""
-    rng = high - low
-    return high - fib * rng if direction > 0 else low + fib * rng
+from algolab.signals.engulfing import (DEFAULT_MIN_BODY_PCT, FIB_ENTRY, engulfing,
+                                       fib_entry_level, hm_direction_series)
 
 
 # Engulfing entries are confirmed by the Hilega-Milega RSI/EMA rule on the pattern bar:

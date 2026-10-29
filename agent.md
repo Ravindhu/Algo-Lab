@@ -35,7 +35,9 @@ Every strategy is a class with a `name`, exported in a module as `STRATEGY`. It 
 | Config `type` | Class | Side | Status |
 |---|---|---|---|
 | `scalp` | `ScalpTrader` | both | enabled in config, framework off |
-| `engulfing` | `EngulfingHmStrategy` (`engulfing_hm`) | both | body filter on; fib 88.6% entry |
+| `engulfing_ocl` | `EngulfingOcl` | BUY | HTF engulfing arms the 88.6% fib level; OCL LTF entry model. Enabled in config, framework off |
+| `engulfing_ocl_inv` | `EngulfingOclInv` | SELL | inverse of `engulfing_ocl`, disabled |
+| (legacy) | `EngulfingHmStrategy` (`engulfing_hm`) | both | single-timeframe engulfing with a fib touch window; no longer in config |
 | `ocl` | `OclKeylevel` | BUY | disabled by default |
 | `ocl_sell_fail_top` | `OclSellFailTop` | BUY | disabled by default |
 | `ocl_sell_fail_bottom` | `OclSellFailBottom` | BUY | disabled by default |
@@ -43,12 +45,13 @@ Every strategy is a class with a `name`, exported in a module as `STRATEGY`. It 
 | `ocl_sell_fail_top_inv` | `OclSellFailTopInv` | SELL | inverse, disabled |
 | `ocl_sell_fail_bottom_inv` | `OclSellFailBottomInv` | SELL | inverse, disabled |
 
-### Engulfing rules (`signals/engulfing.py`, `engulfing_strategy.py`)
+### Engulfing rules (`signals/engulfing.py`, `framework/strategies/engulfing_ocl.py`)
 
-- **Body filter:** both candles of the pattern must have a body above `min_body_pct` (default 0.5) of their high-low range. `engulfing()` applies it, so the live scanner, the backtest and the framework strategy all agree.
-- **Hilega-Milega gate:** on the pattern bar, RSI must be above EMA(RSI) for a BUY, and below for a SELL.
-- **Entry:** `fib_pct` (default 0.886) of the engulfing candle's range, measured from its high for a BUY and from its low for a SELL. The trade fires on the first closed bar that reaches that level, within `max_wait` bars (default 5). An earlier touch voids the pattern.
-- **Known gap:** the Bot places market orders only. The signal carries `entry` as the level, but the fill is at market, not at the level. A resting limit order needs an adapter change.
+- **Body filter:** both candles of the pattern must have a body above `min_body_pct` (default 0.5) of their high-low range. `engulfing()` applies it, so the scanner, the backtest and the strategies all agree.
+- **HTF setup:** a bullish engulfing on the newest closed HTF bar, with Hilega-Milega confirmation (RSI above EMA(RSI)) on that bar. It arms one level, the `fib_pct` (default 0.886) point inside the engulfing candle, and its floor is the candle's low. SELL is the mirror.
+- **LTF entry:** the OCL model, unchanged. Touch of the level, red-red-green on the last three LTF bars, the LTF Hilega-Milega gate with the oversold cap, the retry ladder, and the protections.
+- **Scanner:** `scan_frame` reports `status: ARMED`, `entry_level` and `floor`. The alert text shows them. The scanner has one timeframe, so it does not check the LTF touch.
+- **Legacy:** `EngulfingHmStrategy` still exists. It fills at the level on a touch within a window and is not in config.
 
 ### Inverse (SELL) blueprints (`framework/strategies/ocl_inverse.py`)
 
@@ -58,6 +61,7 @@ Rules that keep this correct:
 
 - Never use a multiplicative tolerance on a price (`x * 0.995`). It breaks for negative prices. Use `x ± 0.005 * abs(x)`.
 - Never clamp a price with `max(x, 0)` unless it is known to be positive.
+- Sell-failure backtests use `run_sell_fail_pair()`. TOP and BOTTOM share an in-memory `MemoryLog`. Each exhaustion is stamped with the simulated bar time, and BOTTOM only trusts stamps strictly before its own clock. This avoids look-ahead and never writes `framework_handoff.json`.
 - SELL handoff state lives in its own namespace (`"SELL:"` prefix in `framework_handoff.json`), so it never collides with the BUY blueprints.
 - In the live manager, a SELL position is tracked in mirrored space (`positions.new_record`, `_manage_one`). Closes use the real broker side (`_broker_side`).
 - The SELL backtest is `run_inverse_backtest()` in `framework/ocl_backtest.py`.

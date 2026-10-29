@@ -60,6 +60,15 @@ def hm_confirmed(closes: list[float], rsi_period: int = 9, ema_period: int = 3) 
 
 
 DEFAULT_MIN_BODY_PCT = 0.5
+FIB_ENTRY = 0.886   # entry sits 88.6% of the way back into the engulfing candle's range
+
+
+def fib_entry_level(high: float, low: float, direction: int, fib: float = FIB_ENTRY) -> float:
+    """Entry level inside the engulfing candle, measured from its extreme in the trade direction.
+    BUY : high - fib * range (a deep pullback from the high).
+    SELL: low  + fib * range (a deep pullback from the low)."""
+    rng = high - low
+    return high - fib * rng if direction > 0 else low + fib * rng
 
 
 def body_ratio(df: pd.DataFrame) -> pd.Series:
@@ -105,8 +114,14 @@ def scan_frame(symbol: str, df: pd.DataFrame, cfg: dict) -> dict | None:
         side = "SELL"
     else:
         return None
+    fib = float(cfg.get("fib_pct", FIB_ENTRY))
+    direction = 1 if side == "BUY" else -1
+    level = fib_entry_level(float(bar["high"]), float(bar["low"]), direction, fib)
+    floor = float(bar["low"]) if side == "BUY" else float(bar["high"])
     return {"symbol": symbol, "side": side, "time": str(closed.index[-1]),
-            "close": float(bar["close"])}
+            "close": float(bar["close"]),
+            # The setup is armed at the fib level. The trade waits for the lower-timeframe touch (OCL model).
+            "status": "ARMED", "entry_level": level, "floor": floor, "fib_pct": fib}
 
 
 def scan_all(htf: str | None = None, data_dir: str | Path | None = None) -> list[dict]:

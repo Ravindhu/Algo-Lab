@@ -70,6 +70,7 @@ def run_cycle() -> dict:
             if key in seen:
                 continue                     # already alerted for this closed bar
             text = (f'{d["symbol"]} {d["side"]} on {p["scanner"]["htf"]} | close {d.get("close")} | '
+                    f'ARMED at fib {d.get("entry_level", 0):.5f} (floor {d.get("floor", 0):.5f}) | '
                     f'conf {d.get("confidence")} | {d.get("reason", "")} | {mode}')
             delivered = alerts.send(text, "WARNING")
             report["take"].append({**d, "alerted": delivered})

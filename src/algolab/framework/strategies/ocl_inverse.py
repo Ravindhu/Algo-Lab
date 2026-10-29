@@ -17,6 +17,7 @@ import pandas as pd
 
 from algolab.framework.strategies.multi import MultiTimeframeStrategy
 from algolab.framework.strategies.ocl import OclKeylevel
+from algolab.framework.strategies.engulfing_ocl import EngulfingOcl
 from algolab.framework.strategies.ocl_sell_fail import OclSellFailBottom, OclSellFailTop
 
 # Signal keys holding a price level. Distances (sl_dist, tp_dist), ATR and protection settings are not mirrored.
@@ -114,4 +115,10 @@ class OclSellFailBottomInv(_Inverted):
     base = _SellFailBottomInner
 
 
-STRATEGY = [OclInv, OclSellFailTopInv, OclSellFailBottomInv]
+class EngulfingOclInv(_Inverted):
+    """SELL side of the engulfing OCL model: bearish engulfing, fib level above, OCL SELL entry."""
+    name = "engulfing_ocl_inv"
+    base = EngulfingOcl
+
+
+STRATEGY = [OclInv, OclSellFailTopInv, OclSellFailBottomInv, EngulfingOclInv]
