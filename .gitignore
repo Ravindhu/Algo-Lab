@@ -1,0 +1,9 @@
+# Python bytecode and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Runtime state and generated reports (never commit)
+reports/
+state/
+prop_state.json
