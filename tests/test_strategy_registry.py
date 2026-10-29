@@ -19,7 +19,7 @@ def frame(n=200, seed=1):
 
 
 def test_builtin_strategies_are_loadable_by_type_name():
-    for type_name in ("scalp_trend_pullback", "engulfing_hm", "ocl_keylevel"):
+    for type_name in ("scalp_trend_pullback", "engulfing", "ocl_keylevel"):
         cls = registry.load(type_name)
         assert issubclass(cls, Strategy)
         assert cls.name == type_name

@@ -1,20 +1,55 @@
 # Ready-made strategy classes for the framework.
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from algolab.framework.strategies.base import Strategy
-from algolab.hilega_milega import atr as atr_series
-from algolab.signals.engulfing import (DEFAULT_MIN_BODY_PCT, FIB_ENTRY, engulfing,
-                                       fib_entry_level, hm_direction_series)
+from algolab.framework.strategies.indicators import atr as atr_series
+from algolab.framework.strategies.indicators import hm_direction
+
+DEFAULT_MIN_BODY_PCT = 0.5
+FIB_ENTRY = 0.886   # entry sits 88.6% of the way back into the engulfing candle's range
 
 
-# Engulfing entries are confirmed by the Hilega-Milega RSI/EMA rule on the pattern bar:
+def fib_entry_level(high: float, low: float, direction: int, fib: float = FIB_ENTRY) -> float:
+    """Entry level inside the engulfing candle, measured from its extreme in the trade direction.
+    BUY : high - fib * range (a deep pullback from the high).
+    SELL: low  + fib * range (a deep pullback from the low)."""
+    rng = high - low
+    return high - fib * rng if direction > 0 else low + fib * rng
+
+
+def body_ratio(df: pd.DataFrame) -> pd.Series:
+    """Candle body as a share of its full range (high - low). 0 where the range is 0."""
+    rng = df["high"] - df["low"]
+    body = (df["close"] - df["open"]).abs()
+    return (body / rng.where(rng > 0)).fillna(0.0)
+
+
+def engulfing(df: pd.DataFrame, min_body_pct: float = DEFAULT_MIN_BODY_PCT) -> pd.Series:
+    """+1 bullish engulfing, -1 bearish engulfing, 0 none (evaluated per bar).
+
+    Both candles of the pattern (the engulfed one and the engulfing one) must have a body larger than
+    min_body_pct of their range. The default is 0.5, i.e. more than 50 percent. Set it to 0 to ignore body size."""
+    o, c = df["open"], df["close"]
+    po, pc = o.shift(), c.shift()
+    bull = (pc < po) & (c > o) & (o <= pc) & (c >= po)
+    bear = (pc > po) & (c < o) & (o >= pc) & (c <= po)
+    if min_body_pct > 0:
+        if not {"high", "low"} <= set(df.columns):
+            raise ValueError("body filter needs high and low columns")
+        ok = (body_ratio(df) > min_body_pct) & (body_ratio(df).shift() > min_body_pct)
+        bull, bear = bull & ok, bear & ok
+    return pd.Series(np.where(bull, 1, np.where(bear, -1, 0)), index=df.index)
+
+
+# The engulfing strategy: entries confirmed by the Hilega-Milega RSI/EMA rule on the pattern bar:
 # BUY needs a bullish engulfing with RSI above EMA(RSI); SELL mirrors it.
 # Entry rule: after the pattern, the trade fires on the FIRST closed bar whose range reaches the fib
 # entry level, within max_wait bars of the pattern. Earlier touches void that pattern.
-class EngulfingHmStrategy(Strategy):
-    name = "engulfing_hm"
+class Engulfing(Strategy):
+    name = "engulfing"
 
     def __init__(self, symbol, timeframe="H4", count=300, rsi_period=9, ema_period=3,
                  atr_period=14, sl_mult=1.5, tp_mult=3.0, fib_pct=FIB_ENTRY,
@@ -41,8 +76,8 @@ class EngulfingHmStrategy(Strategy):
             return None
         last = len(df) - 2            # newest CLOSED candle; the final row is still forming
         eng = engulfing(df, self.min_body_pct).to_numpy()
-        hm = hm_direction_series([float(x) for x in df["close"].iloc[: last + 1]],
-                                 self.rsi_period, self.ema_period)
+        hm = hm_direction([float(x) for x in df["close"].iloc[: last + 1]],
+                          self.rsi_period, self.ema_period)
         lows = df["low"].to_numpy(dtype=float)
         highs = df["high"].to_numpy(dtype=float)
 
@@ -78,4 +113,7 @@ class EngulfingHmStrategy(Strategy):
 
 
 # Plugin registry export (framework_runner loads strategies by name through this).
-STRATEGY = EngulfingHmStrategy
+STRATEGY = Engulfing
+
+# Back-compat alias (the old name).
+EngulfingHmStrategy = Engulfing

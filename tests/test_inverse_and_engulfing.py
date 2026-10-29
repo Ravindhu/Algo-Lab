@@ -11,15 +11,15 @@ from algolab.framework.bot import Bot  # noqa: F401  (import check: the Bot modu
 from algolab.framework.ocl_backtest import run_inverse_backtest, run_ocl_backtest
 from algolab.framework.protect import Protection, Trade
 from algolab.framework.strategies import engulfing_strategy as es
-from algolab.framework.strategies.engulfing_strategy import EngulfingHmStrategy, fib_entry_level
+from algolab.framework.strategies.engulfing_strategy import Engulfing, fib_entry_level
 from algolab.framework.strategies.ocl import OclKeylevel
 from algolab.framework.strategies.ocl_inverse import OclInv, OclSellFailTopInv, mirror_frame
 from algolab.framework.strategies.ocl_sell_fail import OclSellFailTop
 from algolab.framework.symbol import ForexSymbol
 from algolab.backtest.engine import Costs
-from algolab.signals.engulfing import engulfing
+from algolab.framework.strategies.engulfing_strategy import engulfing
 
-IDX = pd.date_range("2026-01-05", periods=400, freq="h")
+EngulfingHmStrategy = Engulfing   # back-compat name used throughout this file
 
 
 def frame(rows, start="2026-01-05", freq="h"):
@@ -70,7 +70,7 @@ def _eng_frame(direction_rows, last_rows=()):
 
 
 def _set_hm(monkeypatch, value):
-    monkeypatch.setattr(es, "hm_direction_series",
+    monkeypatch.setattr(es, "hm_direction",
                         lambda closes, r, e: np.full(len(closes), value, dtype=int))
 
 
@@ -79,10 +79,13 @@ TOUCH = (10.1, 10.3, 9.0, 10.2)       # low 9.0 reaches the 88.6% level (9.137)
 NO_TOUCH = (10.1, 10.3, 9.5, 10.2)    # low 9.5 does not
 
 
+IDX = pd.date_range("2026-01-05", periods=400, freq="h")
+
+
 def test_fib_entry_fires_on_the_first_touch_bar(monkeypatch):
     _set_hm(monkeypatch, +1)
     df = _eng_frame([ENG], [TOUCH])
-    sig = EngulfingHmStrategy(ForexSymbol("EURUSD"), "H1").signal(df)
+    sig = Engulfing(ForexSymbol("EURUSD"), "H1").signal(df)
     assert sig is not None and sig["side"] == "BUY"
     assert sig["entry"] == pytest.approx(fib_entry_level(10.2, 9.0, +1))
 
@@ -90,19 +93,19 @@ def test_fib_entry_fires_on_the_first_touch_bar(monkeypatch):
 def test_no_signal_when_the_level_was_never_touched(monkeypatch):
     _set_hm(monkeypatch, +1)
     df = _eng_frame([ENG], [NO_TOUCH])
-    assert EngulfingHmStrategy(ForexSymbol("EURUSD"), "H1").signal(df) is None
+    assert Engulfing(ForexSymbol("EURUSD"), "H1").signal(df) is None
 
 
 def test_earlier_touch_voids_the_pattern(monkeypatch):
     _set_hm(monkeypatch, +1)
     df = _eng_frame([ENG, TOUCH], [TOUCH])          # touched on the bar after the pattern, and again later
-    assert EngulfingHmStrategy(ForexSymbol("EURUSD"), "H1").signal(df) is None
+    assert Engulfing(ForexSymbol("EURUSD"), "H1").signal(df) is None
 
 
 def test_sell_side_fib_entry_is_the_mirror(monkeypatch):
     _set_hm(monkeypatch, -1)
     df = mirror_frame(_eng_frame([ENG], [TOUCH]))
-    sig = EngulfingHmStrategy(ForexSymbol("EURUSD"), "H1").signal(df)
+    sig = Engulfing(ForexSymbol("EURUSD"), "H1").signal(df)
     assert sig is not None and sig["side"] == "SELL"
     # mirrored prices: the level sits fib * range above the low of the mirrored candle
     assert sig["entry"] == pytest.approx(-fib_entry_level(10.2, 9.0, +1))

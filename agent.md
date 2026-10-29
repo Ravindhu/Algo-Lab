@@ -37,7 +37,7 @@ Every strategy is a class with a `name`, exported in a module as `STRATEGY`. It 
 | `scalp` | `ScalpTrader` | both | enabled in config, framework off |
 | `engulfing_ocl` | `EngulfingOcl` | BUY | HTF engulfing arms the 88.6% fib level; OCL LTF entry model. Enabled in config, framework off |
 | `engulfing_ocl_inv` | `EngulfingOclInv` | SELL | inverse of `engulfing_ocl`, disabled |
-| (legacy) | `EngulfingHmStrategy` (`engulfing_hm`) | both | single-timeframe engulfing with a fib touch window; no longer in config |
+| (legacy alias) | `Engulfing` (`engulfing`; alias `EngulfingHmStrategy`) | both | single-timeframe engulfing with a fib touch window; no longer in config |
 | `ocl` | `OclKeylevel` | BUY | disabled by default |
 | `ocl_sell_fail_top` | `OclSellFailTop` | BUY | disabled by default |
 | `ocl_sell_fail_bottom` | `OclSellFailBottom` | BUY | disabled by default |
@@ -45,13 +45,15 @@ Every strategy is a class with a `name`, exported in a module as `STRATEGY`. It 
 | `ocl_sell_fail_top_inv` | `OclSellFailTopInv` | SELL | inverse, disabled |
 | `ocl_sell_fail_bottom_inv` | `OclSellFailBottomInv` | SELL | inverse, disabled |
 
-### Engulfing rules (`signals/engulfing.py`, `framework/strategies/engulfing_ocl.py`)
+### Engulfing rules (`framework/scanner.py`, `framework/strategies/engulfing_strategy.py`, `engulfing_ocl.py`)
+
+- **One indicator home:** the Hilega-Milega math lives in `framework/strategies/indicators/hm.py`; OCL, engulfing, the scanner and the backtest all import it from there. `algolab/hilega_milega.py` stays only for `live/positions.py`.
 
 - **Body filter:** both candles of the pattern must have a body above `min_body_pct` (default 0.5) of their high-low range. `engulfing()` applies it, so the scanner, the backtest and the strategies all agree.
 - **HTF setup:** a bullish engulfing on the newest closed HTF bar, with Hilega-Milega confirmation (RSI above EMA(RSI)) on that bar. It arms one level, the `fib_pct` (default 0.886) point inside the engulfing candle, and its floor is the candle's low. SELL is the mirror.
 - **LTF entry:** the OCL model, unchanged. Touch of the level, red-red-green on the last three LTF bars, the LTF Hilega-Milega gate with the oversold cap, the retry ladder, and the protections.
-- **Scanner:** `scan_frame` reports `status: ARMED`, `entry_level` and `floor`. The alert text shows them. The scanner has one timeframe, so it does not check the LTF touch.
-- **Legacy:** `EngulfingHmStrategy` still exists. It fills at the level on a touch within a window and is not in config.
+- **Scanner:** `framework/scanner.py` — `scan_frame` reports `status: ARMED`, `entry_level` and `floor`. The alert text shows them. The scanner has one timeframe, so it does not check the LTF touch. `signals/engulfing.py` re-exports it for back-compat.
+- **Legacy:** `Engulfing` (class `name = "engulfing"`) still exists. It fills at the level on a touch within a window and is not in config.
 
 ### Inverse (SELL) blueprints (`framework/strategies/ocl_inverse.py`)
 

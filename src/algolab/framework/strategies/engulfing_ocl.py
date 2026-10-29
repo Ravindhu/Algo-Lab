@@ -15,7 +15,8 @@ from typing import Any
 import pandas as pd
 
 from algolab.framework.strategies.ocl import OclKeylevel
-from algolab.signals.engulfing import engulfing, fib_entry_level, hm_direction_series
+from algolab.framework.strategies.engulfing_strategy import engulfing, fib_entry_level
+from algolab.framework.strategies.indicators import hm_direction
 
 
 class EngulfingOcl(OclKeylevel):
@@ -29,7 +30,7 @@ class EngulfingOcl(OclKeylevel):
         if direction <= 0:                                  # BUY side only; the inverse wrapper gives SELL
             return None
         closes = [float(x) for x in htf["close"]]
-        if p.hm_enabled and int(hm_direction_series(closes, p.rsi_period, p.ema_period)[-1]) != 1:
+        if p.hm_enabled and int(hm_direction(closes, p.rsi_period, p.ema_period)[-1]) != 1:
             return None
         high, low = float(htf["high"].iloc[-1]), float(htf["low"].iloc[-1])
         level = fib_entry_level(high, low, 1, p.fib_pct)

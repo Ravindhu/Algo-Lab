@@ -18,7 +18,8 @@ import numpy as np
 import pandas as pd
 
 from algolab.profile import ROOT
-from algolab.signals.engulfing import engulfing, hm_direction_series
+from algolab.framework.strategies.engulfing_strategy import engulfing
+from algolab.framework.strategies.indicators import hm_direction
 
 
 @dataclass(frozen=True)
@@ -66,7 +67,7 @@ def atr(df: pd.DataFrame, n: int) -> pd.Series:
 def signals(df: pd.DataFrame, p: Params) -> np.ndarray:
     """Signal per bar: the rule evaluated on that bar's closed data (no look-ahead)."""
     eng = engulfing(df).to_numpy()
-    conf = hm_direction_series(df["close"].to_numpy(), p.rsi_n, p.ema_n)
+    conf = hm_direction(df["close"].to_numpy(), p.rsi_n, p.ema_n)
     sig = np.zeros(len(df), dtype=int)
     sig[(eng > 0) & (conf == 1)] = 1
     sig[(eng < 0) & (conf == -1)] = -1

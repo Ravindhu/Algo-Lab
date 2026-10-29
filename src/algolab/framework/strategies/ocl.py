@@ -37,11 +37,12 @@ from typing import Any, NamedTuple, Optional
 
 import pandas as pd
 
+from algolab.framework.strategies.base import Strategy
+from algolab.framework.strategies.indicators import atr as atr_series
+from algolab.framework.strategies.indicators import hm_bullish as _hm_gate
 from algolab.framework.strategies.multi import MultiTimeframeStrategy, closed
 from algolab.framework.protect import Protection
 from algolab.framework.timeframe import TimeFrame
-from algolab.hilega_milega import atr as atr_series
-from algolab.hilega_milega import ema, hilega_milega_rsi
 
 log = logging.getLogger("algolab.ocl")
 
@@ -155,13 +156,8 @@ def hm_bullish(closes: list[float], p: OclParams, *, oversold_cap: bool) -> bool
     """RSI above EMA(RSI). With oversold_cap, RSI must also be at or below p.oversold."""
     if len(closes) < p.rsi_period + p.ema_period + 2:
         return False
-    rsi = hilega_milega_rsi(closes, rsi_period=p.rsi_period)
-    line = ema(rsi, p.ema_period)
-    i = min(len(rsi), len(line)) - 1
-    r, e = rsi[i], line[i]
-    if r is None or e is None or r <= e:
-        return False
-    return (r <= p.oversold) if oversold_cap else True
+    return _hm_gate(closes, rsi_period=p.rsi_period, ema_period=p.ema_period,
+                    oversold=p.oversold if oversold_cap else None)
 
 
 def htf_setup(htf_closed: pd.DataFrame, p: OclParams) -> dict[str, Any] | None:
@@ -357,12 +353,15 @@ class OclKeylevel(MultiTimeframeStrategy):
         return EXIT_FIXED
 
     def _ltf_atr_rsi(self, ltf: pd.DataFrame) -> tuple[float | None, float | None]:
+        import numpy as np
+
+        from algolab.framework.strategies.indicators import hm_rsi_series
         highs = [float(x) for x in ltf["high"]]
         lows = [float(x) for x in ltf["low"]]
         closes = [float(x) for x in ltf["close"]]
         a = atr_series(highs, lows, closes, period=self.p.atr_period)[-1]
-        r = hilega_milega_rsi(closes, rsi_period=self.p.rsi_period)[-1]
-        return a, r
+        r = hm_rsi_series(closes, rsi_period=self.p.rsi_period)[-1]
+        return a, (None if np.isnan(r) else float(r))
 
 
 # Plugin registry export (framework_runner loads strategies by name through this).

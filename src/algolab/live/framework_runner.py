@@ -33,7 +33,7 @@ from algolab.ops.state import now_utc, read_json, write_json
 from algolab.profile import ROOT
 
 log = logging.getLogger("algolab.framework")
-STRATEGY_TYPES = {"scalp": "scalp_trend_pullback", "engulfing": "engulfing_hm",
+STRATEGY_TYPES = {"scalp": "scalp_trend_pullback", "engulfing": "engulfing",
                   "ocl": "ocl_keylevel", "ocl_sell_fail_top": "ocl_sell_fail_top",
                   "ocl_sell_fail_bottom": "ocl_sell_fail_bottom"}
 STRATEGY_STATE = "framework_strategies.json"

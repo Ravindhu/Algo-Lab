@@ -3,16 +3,16 @@
 Strategies live in the strategies/ subpackage:
 
     from algolab.framework import Bot, ForexSymbol
-    from algolab.framework.strategies import EngulfingHmStrategy
+    from algolab.framework.strategies import Engulfing
 
-    bot = Bot(adapter=ad, dry_run=True).add(EngulfingHmStrategy(ForexSymbol("EURUSD")))
+    bot = Bot(adapter=ad, dry_run=True).add(Engulfing(ForexSymbol("EURUSD")))
     await bot.run_once()
 """
 from algolab.framework.bot import Bot
 from algolab.framework.strategies import (
-    EngulfingHmStrategy, MultiTimeframeStrategy, OclKeylevel, ScalpTrader, Strategy)
+    Engulfing, EngulfingHmStrategy, MultiTimeframeStrategy, OclKeylevel, ScalpTrader, Strategy)
 from algolab.framework.symbol import ForexSymbol
 from algolab.framework.timeframe import TimeFrame
 
 __all__ = ["Bot", "Strategy", "MultiTimeframeStrategy", "ForexSymbol", "TimeFrame",
-           "ScalpTrader", "EngulfingHmStrategy", "OclKeylevel"]
+           "ScalpTrader", "Engulfing", "EngulfingHmStrategy", "OclKeylevel"]

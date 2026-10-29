@@ -85,13 +85,16 @@ src/algolab/
   cli.py                 `algolab` command
   profile.py             loads config/profiles and .env
   strategy.py            live strategy parameters (config/strategy.json)
-  hilega_milega.py       ATR and shared indicator helpers
-  signals/engulfing.py   HTF engulfing + Hilega-Milega signal rule (shared by live and backtest)
+  hilega_milega.py       legacy HM math (kept for live/positions.py); strategies use indicators/hm
+  signals/               back-compat shim only (scanner + engulfing names re-exported)
+  framework/scanner.py   HTF engulfing + Hilega-Milega scanner (scan_frame / scan_all)
+  framework/strategies/indicators/  the ONE Hilega-Milega + ATR (hm.py), used by all strategies
+  framework/strategies/engulfing_strategy.py  Engulfing strategy + engulfing()/fib_entry_level
   backtest/engine.py     bar simulation with spread, commission, ATR stops
   backtest/validate.py   out-of-sample gate -> reports/validation.json
   optimize/autotune.py   Optuna + ML search, sealed split, holdout ledger, framework sync
   framework/             Bot, prop rules, protect, Monte Carlo, e2e replay
-  framework/strategies/  all strategies: scalp, engulfing, OCL + their base classes
+  framework/strategies/  all strategies: scalp, Engulfing, OCL + their base classes
   ml/                    features and model for the optional ML filter
   memory/store.py        agent memory (working, calibration, mistake)
   llm/budget.py          token budget and cache
