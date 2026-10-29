@@ -7,7 +7,8 @@ Rules follow ocl_keylevel.py (its defaults are in Protection and OclParams):
   - Target   : a bar's high reaches the fixed target           -> "TP"    (intrabar, broker take-profit)
   - Disaster : a bar's low reaches the broker stop             -> "DISASTER" (intrabar, broker stop)
 Breakeven: when price reaches trigger + risk * breakeven_rr, the LTF stop moves up to
-  trigger * (1 + round_trip_cost_pct / 100). It only moves up. risk = trigger - HTF floor.
+  trigger + round_trip_cost_pips * pip (forex), or trigger * (1 + round_trip_cost_pct / 100) when no pips are set.
+  It only moves up. risk = trigger - HTF floor.
 Trail: highest close since entry - atr_multiplier * ATR, never below the current stop, only moves up.
 
 Deliberate deviation: the original has no broker-side stop (it polls). Here a disaster stop sits beyond
@@ -25,7 +26,8 @@ class Protection:
     atr_trail_enabled: bool = True
     atr_multiplier: float = 2.0
     breakeven_rr: float = 1.5
-    round_trip_cost_pct: float = 0.20
+    round_trip_cost_pct: float = 0.20          # legacy: percent of price (a stock-market setting)
+    round_trip_cost_pips: Optional[float] = None  # forex: spread + commission in pips; overrides the pct
 
     def __post_init__(self) -> None:
         if self.atr_multiplier <= 0:
@@ -34,6 +36,8 @@ class Protection:
             raise ValueError("breakeven_rr must be >= 0")
         if self.round_trip_cost_pct < 0:
             raise ValueError("round_trip_cost_pct must be >= 0")
+        if self.round_trip_cost_pips is not None and self.round_trip_cost_pips < 0:
+            raise ValueError("round_trip_cost_pips must be >= 0")
 
     @classmethod
     def from_dict(cls, d: dict) -> "Protection":
@@ -61,13 +65,19 @@ class Trade:
 
     @classmethod
     def open(cls, *, entry: float, trigger: float, htf_sl: float, broker_sl: float,
-             tp: Optional[float], p: Protection) -> "Trade":
+             tp: Optional[float], p: Protection, pip: float = 0.0) -> "Trade":
+        """pip is the symbol's pip size. It is required when p.round_trip_cost_pips is set."""
         risk = trigger - htf_sl
         be_trigger = trigger + risk * p.breakeven_rr if risk > 0 else math.inf
+        if p.round_trip_cost_pips is not None:
+            if pip <= 0:
+                raise ValueError("pip size is required when round_trip_cost_pips is set")
+            be_floor = trigger + p.round_trip_cost_pips * pip
+        else:
+            be_floor = trigger * (1.0 + p.round_trip_cost_pct / 100.0)
         return cls(side=1, entry=entry, trigger=trigger, htf_sl=htf_sl, stop=htf_sl,
                    broker_sl=broker_sl, tp=tp, risk=risk, be_trigger=be_trigger,
-                   be_floor=trigger * (1.0 + p.round_trip_cost_pct / 100.0),
-                   best_close=entry)
+                   be_floor=be_floor, best_close=entry)
 
     def intrabar_exit(self, high: float, low: float) -> Optional[str]:
         """Broker-side exits inside one bar. The disaster stop is checked first (conservative)."""

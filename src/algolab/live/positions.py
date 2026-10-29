@@ -19,6 +19,7 @@ import logging
 import pandas as pd
 
 from algolab.framework.protect import Protection, Trade
+from algolab.framework.symbol import ForexSymbol
 from algolab.framework.timeframe import TimeFrame
 from algolab.hilega_milega import atr as atr_series
 from algolab.live.adapter import AdapterError
@@ -32,7 +33,8 @@ def new_record(rec: dict, *, strategy: str, ltf: str, htf: str) -> dict:
     tp = float(rec["tp"]) if float(rec.get("tp") or 0) > 0 else None
     protect = Protection.from_dict(rec["protect"])
     trade = Trade.open(entry=fill, trigger=float(rec["trigger"]), htf_sl=float(rec["htf_sl"]),
-                       broker_sl=float(rec["sl"]), tp=tp, p=protect)
+                       broker_sl=float(rec["sl"]), tp=tp, p=protect,
+                       pip=ForexSymbol(rec["symbol"]).pip)
     delta = TimeFrame(ltf).seconds
     return {
         "ticket": int(rec["ticket"]), "strategy": strategy, "symbol": rec["symbol"],

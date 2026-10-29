@@ -9,6 +9,7 @@ import sys
 
 from algolab.agent.multi_agent import Orchestrator
 from algolab.ops import alerts
+from algolab.ops.risk import check_limits
 from algolab.ops.state import (ROOT, engage_kill, kill_switch_on, minutes_since,
                                now_utc, ops_config, read_json, write_json)
 from algolab.profile import load_profile
@@ -41,23 +42,16 @@ def guard(p: dict, ops: dict) -> tuple[bool, str, dict]:
         return False, "market data missing or stale", acct
 
     equity = float(acct["equity"])
-    today = now_utc().date().isoformat()
-    risk = read_json("risk.json", {})
-    peak = max(float(risk.get("peak", equity)), equity)
-    day_start = float(risk["day_start"]) if risk.get("day") == today else equity
-    r = ops["risk"]
-
-    if equity <= peak * (1 - r["max_drawdown_kill"]):
-        reason = f"max drawdown {r['max_drawdown_kill']:.0%} breached"
-        engage_kill(reason)
-        alerts.send("KILL SWITCH engaged: " + reason +
+    ok_r, why_r, breach = check_limits(equity, ops["risk"])
+    if breach:
+        engage_kill(why_r)
+        alerts.send("KILL SWITCH engaged: " + why_r +
                     ". Review, then delete state/KILL to resume.", "CRITICAL")
-        return False, reason, acct
-
-    write_json("risk.json", {"peak": peak, "day": today, "day_start": day_start})
-    if equity <= day_start * (1 - r["max_daily_loss"]):
-        return False, "daily loss limit reached (paused until next UTC day)", acct
+        return False, why_r, acct
+    if not ok_r:
+        return False, why_r, acct
     return True, "ok", acct
+
 
 
 def run_cycle() -> dict:

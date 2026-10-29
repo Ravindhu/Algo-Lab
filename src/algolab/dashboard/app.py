@@ -13,6 +13,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from dash import Dash, Input, Output, dcc, html
 
+from algolab.memory import store as memory
+from algolab.ops import journal
 from algolab.ops.state import STATE_DIR
 from algolab.profile import ROOT
 
@@ -46,10 +48,18 @@ def snapshot() -> dict:
             recent.append({"time": hit.get("time"), "symbol": hit.get("symbol"),
                            "side": hit.get("side"), "rsi": hit.get("rsi"),
                            "confidence": hit.get("confidence"), "reason": hit.get("reason")})
+    # Live-trading results (legacy engulfing path) appear beside the alert-only scans.
+    for r in (live.get("results") or [])[::-1]:
+        recent.insert(0, {"time": live.get("ts"), "symbol": r.get("symbol"), "side": r.get("side"),
+                          "rsi": "", "confidence": "", "reason": f'{"EXECUTED" if r.get("executed") else "dry run"}: {r.get("reason", "")}'})
     return {"live": live, "health": health, "tokens": tokens, "validation": validation,
             "autotune": autotune, "strategy": strategy,
             "token_limit": llm_cfg.get("daily_token_budget", 0),
-            "kill": (STATE_DIR / "KILL").exists(), "recent": recent[::-1][:50]}
+            "kill": (STATE_DIR / "KILL").exists(), "recent": recent[::-1][:50],
+            "framework": _j(STATE_DIR / "framework_last_cycle.json", {}),
+            "journal": journal.read(), "sealed": _j(STATE_DIR / "sealed_result.json", {}),
+            "calibration": memory.recall("calibration", 200),
+            "mistakes": memory.recall("mistake", 20), "working": memory.recall("working", 5)}
 
 
 def _card(title: str, value, note: str = "") -> html.Div:
@@ -106,6 +116,67 @@ def signals_table(s: dict) -> list:
             _table(s["recent"], ["time", "symbol", "side", "rsi", "confidence", "reason"])]
 
 
+def trades_panel(s: dict) -> list:
+    rows = s["journal"][-60:][::-1]
+    table = _table([{"time": r.get("ts", ""), "kind": r.get("kind", ""),
+                     "source": r.get("source", r.get("reason", "")), "strategy": r.get("strategy", ""),
+                     "symbol": r.get("symbol", ""), "side": r.get("side", ""),
+                     "entry": r.get("entry", r.get("price", "")), "sl": r.get("sl", ""),
+                     "pnl": round(r["pnl"], 5) if "pnl" in r else "", "R": round(r["r"], 2) if "r" in r else ""}
+                    for r in rows],
+                   ["time", "kind", "source", "strategy", "symbol", "side", "entry", "sl", "pnl", "R"])
+    closes = [r for r in s["journal"] if r.get("kind") == "close"]
+    fig = go.Figure()
+    if closes:
+        cum, total = [], 0.0
+        for r in closes:
+            total += float(r["r"])
+            cum.append(total)
+        fig.add_trace(go.Scatter(y=cum, mode="lines+markers", name="cumulative R"))
+    fig.update_layout(template="plotly_dark", height=260, margin=dict(l=10, r=10, t=30, b=10),
+                      title=f"Closed trades: {len(closes)} (cumulative R)")
+    return [html.H4("Trades (journal)"), dcc.Graph(figure=fig, config={"displayModeBar": False}), table]
+
+
+def framework_panel(s: dict) -> list:
+    fw = s["framework"]
+    if not fw:
+        return [html.Div("framework has not run yet (enable it in config/framework.json)", style={"opacity": 0.6})]
+    res = fw.get("framework", {}) if isinstance(fw.get("framework"), dict) else {}
+    results = res.get("results", [])
+    events = res.get("events", [])
+    prop = res.get("prop")
+    rows = [{"kind": "result", "detail": f'{r.get("strategy")} {r.get("symbol")} {r.get("side", "")} '
+             f'{"EXECUTED" if r.get("executed") else r.get("why", "not placed")}'} for r in results]
+    rows += [{"kind": "closed", "detail": f'{e.get("strategy")} {e.get("symbol")} {e.get("reason")} at {e.get("price")}'}
+             for e in events]
+    fw_cfg = _j(ROOT / "config" / "framework.json", {})
+    ok_gate, gate_why = journal.entry_gate(fw_cfg.get("entry_gate"))
+    gate = f'entry gate: {"open" if ok_gate else "BLOCKING"} - {gate_why}'
+    return [html.H4("Framework (last cycle)"),
+            html.Div(f"may trade: {fw.get('may_trade')} | {fw.get('reason', '')} | equity {fw.get('equity', '-')}"),
+            html.Div(f"prop: {prop}" if prop else "prop rules: off", style={"opacity": 0.7}),
+            _table(rows, ["kind", "detail"]),
+            html.Div(gate, style={"opacity": 0.6})]
+
+
+def agent_panel(s: dict) -> list:
+    gap = memory.calibration_gap(s["calibration"])
+    sealed = s["sealed"]
+    cards = [_card("Confidence calibration",
+                   "n/a" if not gap else f'{gap["mean_predicted"]:.2f} vs {gap["realised_win_rate"]:.2f}',
+                   "no calibration records yet" if not gap else f'{gap["n"]} trades, gap {gap["gap"]:+.2f}'),
+             _card("Sealed test", "not run" if not sealed else ("PASSED" if sealed.get("passed") else "FAILED"),
+                   "; ".join(sealed.get("reasons", [])) if sealed else "run: algolab sealed"),
+             _card("Holdout reuse", "-", (s["autotune"].get("reasons") or ["-"])[0])]
+    mistakes = [{"ts": m.get("ts", ""), "mistake": m.get("what", m.get("summary", str(m))),
+                 "rule": m.get("rule", "")} for m in s["mistakes"]][::-1]
+    working = [{"ts": w.get("ts", ""), "note": w.get("hypothesis", str(w))} for w in s["working"]][::-1]
+    return [html.Div(cards, style={"display": "flex", "flexWrap": "wrap"}),
+            html.H4("Recent mistakes and rules"), _table(mistakes, ["ts", "mistake", "rule"]),
+            html.H4("Working notes"), _table(working, ["ts", "note"])]
+
+
 def tokens_panel(s: dict) -> list:
     tok = s["tokens"]
     used = tok.get("used", 0) if tok.get("day") else 0
@@ -147,6 +218,9 @@ app.layout = html.Div(style=PAGE, children=[
         dcc.Tab(label="Signals", value="signals"),
         dcc.Tab(label="Health", value="health"),
         dcc.Tab(label="Tokens", value="tokens"),
+        dcc.Tab(label="Trades", value="trades"),
+        dcc.Tab(label="Framework", value="framework"),
+        dcc.Tab(label="Agent", value="agent"),
     ]),
     html.Div(id="tab-body", style={"marginTop": "12px"}),
     html.H3("Autotune (3D)"),
@@ -165,6 +239,12 @@ def render_tab(tab: str, _):
         return health_table(s)
     if tab == "tokens":
         return tokens_panel(s)
+    if tab == "trades":
+        return trades_panel(s)
+    if tab == "framework":
+        return framework_panel(s)
+    if tab == "agent":
+        return agent_panel(s)
     return [html.Div(overview(s), style={"display": "flex", "flexWrap": "wrap"})]
 
 

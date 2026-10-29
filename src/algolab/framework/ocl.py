@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Optional
 
 import pandas as pd
 
@@ -108,6 +108,7 @@ class OclParams:
     atr_multiplier: float = 2.0
     breakeven_rr: float = 1.5
     round_trip_cost_pct: float = 0.20
+    round_trip_cost_pips: Optional[float] = None   # forex round-trip cost in pips (preferred)
 
     def __post_init__(self) -> None:
         if self.trigger_level_mode not in (CONSERVATIVE, AGGRESSIVE):
@@ -126,12 +127,13 @@ class OclParams:
             raise ValueError("max_ltf_retries must be >= 0")
         if self.lookback < 30:
             raise ValueError("lookback must be >= 30 bars")
-        Protection(self.atr_trail_enabled, self.atr_multiplier, self.breakeven_rr, self.round_trip_cost_pct)
+        self.protection  # runs Protection's own validation
 
     @property
     def protection(self) -> Protection:
-        return Protection(self.atr_trail_enabled, self.atr_multiplier, self.breakeven_rr,
-                          self.round_trip_cost_pct)
+        return Protection(atr_trail_enabled=self.atr_trail_enabled, atr_multiplier=self.atr_multiplier,
+                          breakeven_rr=self.breakeven_rr, round_trip_cost_pct=self.round_trip_cost_pct,
+                          round_trip_cost_pips=self.round_trip_cost_pips)
 
     @classmethod
     def from_dict(cls, cfg: dict[str, Any]) -> "OclParams":
