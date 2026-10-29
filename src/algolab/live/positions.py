@@ -6,10 +6,13 @@ ocl_keylevel.py. This manager closes at market when one of those rules fires.
 
 Each cycle, per tracked position:
   1. Broker no longer holds it: classify the closure from the bars since the last cycle
-     (DISASTER / TP / BROKER_CLOSE). No order is sent.
+     (DISASTER / TP / BROKER_CLOSE). No order is sent. P&L is the broker's realised profit.
   2. Otherwise run protect.Trade.on_closed_bar() on each new closed LTF bar. SL or TRAIL closes at market.
   3. The last closed HTF bar closed below the HTF floor: close at market (HTF).
 
+P&L is never estimated: it is the broker's realised profit from the deal history, or None (unknown).
+A partial close keeps the position tracked with the remaining volume and retries next cycle.
+reconcile() reports broker positions with this project's magic number that are not tracked (orphans).
 State is only written after a broker call succeeds. If a close fails, the next cycle re-evaluates the same bar.
 """
 from __future__ import annotations
@@ -22,7 +25,7 @@ from algolab.framework.protect import Protection, Trade
 from algolab.framework.symbol import ForexSymbol
 from algolab.framework.timeframe import TimeFrame
 from algolab.hilega_milega import atr as atr_series
-from algolab.live.adapter import AdapterError
+from algolab.live.adapter import AdapterError, PartialClose
 
 log = logging.getLogger("algolab.positions")
 
@@ -47,9 +50,18 @@ def new_record(rec: dict, *, strategy: str, ltf: str, htf: str) -> dict:
     }
 
 
-def _event(rec: dict, reason: str, price: float) -> dict:
+def _event(rec: dict, reason: str, price: float, pnl: float | None) -> dict:
     return {"strategy": rec["strategy"], "symbol": rec["symbol"], "reason": reason,
-            "price": float(price), "ticket": rec["ticket"]}
+            "price": float(price), "ticket": rec["ticket"], "pnl": pnl}
+
+
+def _realized(ad, ticket: int) -> float | None:
+    """Broker realised P&L of a closed position, or None when it cannot be read (recorded as unknown)."""
+    try:
+        return ad.realized_pnl(int(ticket))
+    except AdapterError as e:
+        log.error("realised P&L for ticket %s unavailable: %s", ticket, e)
+        return None
 
 
 def _classify(trade: Trade, new_bars: pd.DataFrame) -> tuple[str, float]:
@@ -60,6 +72,22 @@ def _classify(trade: Trade, new_bars: pd.DataFrame) -> tuple[str, float]:
             return "TP", trade.tp
     last = float(new_bars["close"].iloc[-1]) if len(new_bars) else trade.entry
     return "BROKER_CLOSE", last
+
+
+class _StillOpen(Exception):
+    """A partial close left the position open. The record keeps its old trade state and is re-evaluated."""
+
+
+def _close_at_market(ad, rec: dict, side: int, magic: int, deviation: int) -> tuple[float, float | None]:
+    """Close the whole position. Returns (fill_price, realised_pnl). Raises _StillOpen after a partial close,
+    with rec["volume"] reduced to what is still open."""
+    try:
+        res = ad.close_position(rec["ticket"], rec["symbol"], side, rec["volume"], magic, deviation)
+    except PartialClose as e:
+        rec["volume"] = float(e.remaining)
+        log.error("ticket %s partially closed; %s lots still open, retrying next cycle", rec["ticket"], e.remaining)
+        raise _StillOpen() from e
+    return float(res["fill_price"]), _realized(ad, rec["ticket"])
 
 
 async def _manage_one(ad, rec: dict, live_pos, magic: int, deviation: int, lookback: int) -> dict | None:
@@ -80,7 +108,7 @@ async def _manage_one(ad, rec: dict, live_pos, magic: int, deviation: int, lookb
 
     if live_pos is None:
         reason, price = _classify(trade, new_bars)
-        return _event(rec, reason, price)
+        return _event(rec, reason, price, _realized(ad, rec["ticket"]))
 
     last_bar = rec["last_bar"]
     for pos in positions:
@@ -89,17 +117,22 @@ async def _manage_one(ad, rec: dict, live_pos, magic: int, deviation: int, lookb
         reason = trade.on_closed_bar(high=high, close=close, atr=atr_vals[pos], p=protect)
         last_bar = str(idx + delta)
         if reason:
-            ad.close_position(rec["ticket"], sym, trade.side, rec["volume"], magic, deviation)
+            try:
+                fill, pnl = _close_at_market(ad, rec, trade.side, magic, deviation)
+            except _StillOpen:
+                return None                  # nothing saved: the same bar is re-evaluated next cycle
             rec["last_bar"], rec["trade"] = last_bar, trade.to_dict()
-            return _event(rec, reason, close)
+            return _event(rec, reason, fill, pnl)
 
     hbars = await ad.candles(sym, htf, 10)
     hclosed = hbars.iloc[:-1]
     if len(hclosed) and float(hclosed["close"].iloc[-1]) < trade.htf_sl:
-        hclose = float(hclosed["close"].iloc[-1])
-        ad.close_position(rec["ticket"], sym, trade.side, rec["volume"], magic, deviation)
+        try:
+            fill, pnl = _close_at_market(ad, rec, trade.side, magic, deviation)
+        except _StillOpen:
+            return None
         rec["last_bar"], rec["trade"] = last_bar, trade.to_dict()
-        return _event(rec, "HTF", hclose)
+        return _event(rec, "HTF", fill, pnl)
 
     rec["last_bar"], rec["trade"] = last_bar, trade.to_dict()
     return None
@@ -123,21 +156,30 @@ async def manage(ad, tracked: dict, *, magic: int, deviation: int, lookback: int
     return events
 
 
+def reconcile(ad, tracked: dict, *, magic: int) -> list[int]:
+    """Tickets that the broker holds for this project's magic number but that are NOT tracked.
+    Such a position has no trailing stop or HTF exit. The caller must alert and block new entries."""
+    tracked_tickets = {int(r["ticket"]) for r in tracked.values()}
+    return sorted(ad.position_tickets(magic) - tracked_tickets)
+
+
 def flatten(ad, tracked: dict, *, magic: int, deviation: int, reason: str) -> list[dict]:
     """Close every tracked position now (prop-firm rule). Positions the broker already closed are
-    recorded as BROKER_CLOSE and dropped."""
-    live = {int(p["ticket"]) for p in ad.positions_by_magic(magic)}
+    recorded as BROKER_CLOSE and dropped. A position that could not be closed stays tracked."""
+    live = {int(p["ticket"]): p for p in ad.positions_by_magic(magic)}
     events: list[dict] = []
     for key in list(tracked):
         rec = tracked[key]
         if int(rec["ticket"]) in live:
+            side = int(live[int(rec["ticket"])]["side"])
             try:
-                res = ad.close_position(rec["ticket"], rec["symbol"], 1, rec["volume"], magic, deviation)
-            except AdapterError as e:
+                fill, pnl = _close_at_market(ad, rec, side, magic, deviation)
+            except (AdapterError, _StillOpen) as e:
                 log.error("flatten %s failed: %s (kept tracking)", key, e)
                 continue
-            events.append(_event(rec, reason, float(res.get("fill_price", 0.0))))
+            events.append(_event(rec, reason, fill, pnl))
         else:
-            events.append(_event(rec, "BROKER_CLOSE", float(rec["trade"]["entry"])))
+            events.append(_event(rec, "BROKER_CLOSE", float(rec["trade"]["entry"]),
+                                 _realized(ad, rec["ticket"])))
         del tracked[key]
     return events

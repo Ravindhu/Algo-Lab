@@ -2,6 +2,7 @@
 Used as a filter: a trade is taken only when the probability reaches the strategy's ml_threshold."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import joblib
@@ -42,8 +43,11 @@ def proba(model, X: pd.DataFrame):
 
 
 def save(model) -> None:
+    """Write to a temp file and rename, so a crash never leaves a half-written model."""
     MODEL_FILE.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, MODEL_FILE)
+    tmp = MODEL_FILE.with_suffix(".tmp")
+    joblib.dump(model, tmp)
+    os.replace(tmp, MODEL_FILE)
 
 
 def load():

@@ -1,11 +1,11 @@
 {
-  "risk_per_trade": 0.01,
+  "risk_per_trade": 0.005,
   "atr_n": 14,
   "sl_mult": 1.5,
   "tp_mult": 3.0,
-  "max_lots": 1.0,
+  "max_lots": 0.5,
   "max_open_trades": 3,
   "min_confidence": 0.6,
-  "magic": 20261028,
+  "magic": 20262002,
   "deviation_points": 20
 }

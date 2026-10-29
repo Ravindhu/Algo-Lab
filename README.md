@@ -30,7 +30,7 @@ Then, on either machine:
 |---|---|---|
 | Framework cycle (scalp, engulfing, OCL, prop rules) | `python -m algolab.live.pipeline --framework` | 5 min |
 | Alert-only scan (VPS) | `python -m algolab.ops.pipeline` | 15 min |
-| Autotune | `algolab optimize` | on demand |
+| Autotune | `algolab optimize` | on demand (never automatic; a person approves with `--apply`) |
 
 Both live jobs run only after the same guards pass: kill switch, validation, fresh account state, and loss limits.
 
@@ -39,8 +39,9 @@ Both live jobs run only after the same guards pass: kill switch, validation, fre
 | Command | What it does |
 |---|---|
 | `algolab status` | Kill switch, last cycle, health, token use |
-| `algolab validate` | Out-of-sample gate. Required before live trading |
-| `algolab optimize` | Parameter search, report only (never changes settings) |
+| `algolab select` | Strategy ranking (report only). `algolab select --apply` enables or disables strategies after your review |
+| `algolab validate` | Out-of-sample gate on real history (legacy rule + every enabled framework strategy, replayed). Required before live trading. Re-run after any settings change |
+| `algolab optimize` | Parameter search. Report only; `algolab optimize --apply` applies a candidate after you have reviewed it |
 | `algolab backtest` | Run the live rule on history |
 | `algolab kill` | Stop all trading now |
 | `algolab resume` | Allow trading again after you have reviewed the cause |
@@ -56,7 +57,22 @@ Both live jobs run only after the same guards pass: kill switch, validation, fre
 - **Entry gate.** Framework entries need the lower bound of the recent win rate (closed trades in `state/journal.jsonl`) to clear the breakeven level for the target RR. A bounded warm-up lets the first trades happen before any closes exist.
 - **Holdout discipline.** Each optimizer selection on the same holdout window is counted. After `max_holdout_uses`, the candidate is not applied until the sealed test is run.
 - **LLM token control.** A daily token budget, a cache per candidate, and compact payloads. When the budget is spent, the analyst skips trades. Usage is on the dashboard.
+- **Settings are bound to validation.** `validate` records a fingerprint of every setting that affects trading. A changed strategy, parameter, cost or enabled set makes the report stale, and trading stops until you validate again.
+- **Every enabled framework strategy must be replayed.** The replay runs the live code path on real M5/M15 data (never synthetic data). A strategy the replay cannot test fails the gate, so it cannot trade.
+- **Broker P&L only.** Closed trades are booked at the broker's realised profit (commission and swap included). Unknown P&L is recorded as unknown and excluded from the entry gate and from strategy selection. It is never estimated.
+- **Fills are recorded at once.** Each fill is tracked and journaled the moment it happens. A position the broker holds that nothing tracks blocks new entries and raises a CRITICAL alert.
+- **One cycle at a time.** A lock file stops overlapping runs from trading together. Traded signal keys persist, so a restart cannot trade the same bar twice.
+- **Margin and volume.** Lots are snapped to the broker's volume step, and an order is skipped if its margin exceeds `max_margin_use` of free margin.
+- **Deposits are not losses.** Money moved in or out is removed before the drawdown and daily-loss limits are measured.
+- **No unattended changes.** The optimizer and the selector never change live settings on their own. Approval is explicit (`--apply`).
 - **DRY_RUN.** Alerts only, no orders, until you set `DRY_RUN=false`.
+
+## What you need
+
+- Real history CSVs in `data/`: `{SYMBOL}_H4.csv` (legacy rule) and `{SYMBOL}_M5.csv` plus `{SYMBOL}_M15.csv` (framework replay). Export them with the Windows sync or from your broker. Without them, `validate` fails on purpose.
+- A Windows machine running MT5 and a **demo** account for the live adapter. Check the broker's filling modes and volume steps in the terminal first.
+- `config/symbols.json` (export with `scripts/export_symbols.py`), or the symbol list in `config/ops.json`.
+- Optional: Ollama for the LLM analyst, a Telegram token or webhook for alerts, and `ANTHROPIC_API_KEY` for the advisor.
 
 ## Accuracy, honestly
 

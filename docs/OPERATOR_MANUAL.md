@@ -124,9 +124,9 @@ win rate to clear `min_lower_bound` (0.25 is the breakeven win rate for a 3R tar
 
 ## 8. Known limits
 
-- Backtest and e2e results come from synthetic or unvalidated data until a real-history run is recorded here.
-- The optimizer tunes the shared backtest rule. It writes its shared parameters (rsi_n, atr_n, sl_mult, tp_mult) into the framework's scalp strategy. OCL parameters are not optimized.
-- `validate` still uses the whole history, including the sealed slice. Only `algolab sealed` is out-of-sample for the optimizer's choices.
+- Backtest and e2e results are only meaningful on real history. Validation refuses to pass without real M5/M15/H4 data (synthetic data is never used to validate).
+- The optimizer tunes the shared backtest rule. Its result is applied only when you approve it (`algolab optimize --apply`); the scheduled timer does not run it. Shared parameters (rsi_n, atr_n, sl_mult, tp_mult) are then written into the framework's scalp strategy. OCL parameters are not optimized.
+- `validate` now uses only the history before the sealed slice (the same cut the optimizer respects). `algolab sealed` remains the only check on that slice.
 - OCL parameters were ported from a stock-market setup. Touch buffer and round-trip cost now use pips for forex (`round_trip_cost_pips`). Re-derive them from your broker's spread and commission.
 - Monte Carlo assumes independent trades. Real trades cluster, so treat the drawdown numbers as optimistic.
 - No entry can be guaranteed profitable. The honest target is a positive lower bound on expectancy after costs, out of sample.

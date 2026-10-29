@@ -1,4 +1,7 @@
-"""Alerts to Telegram and/or a generic webhook, with per-key cooldown so one problem does not spam you."""
+"""Alerts to Telegram and/or a generic webhook, with per-key cooldown so one problem does not spam you.
+
+A cooldown is recorded only when the alert was delivered. A failed delivery is retried on the next attempt
+instead of silently suppressing the alert for the whole cooldown window."""
 import logging
 import os
 
@@ -13,10 +16,12 @@ def send(text: str, level: str = "WARNING", key: str | None = None,
         sent = read_json("alerts.json", {})
         if key in sent and minutes_since(sent[key]) < cooldown_min:
             return False
-        sent[key] = now_utc().isoformat()
-        write_json("alerts.json", sent)
 
-    import httpx  # imported here so modules that only check state do not need it
+    try:
+        import httpx  # imported here so modules that only check state do not need it
+    except ImportError:
+        log.error("httpx is not installed: alert not delivered (%s)", level)
+        return False
 
     msg = f"[AlgoLab {level}] {text}"
     delivered = False
@@ -35,4 +40,9 @@ def send(text: str, level: str = "WARNING", key: str | None = None,
         log.error("alert delivery failed (%s)", type(e).__name__)
     if not delivered:
         log.warning("no alert channel delivered: %s", msg)
-    return delivered
+        return False
+    if key:
+        sent = read_json("alerts.json", {})
+        sent[key] = now_utc().isoformat()
+        write_json("alerts.json", sent)
+    return True

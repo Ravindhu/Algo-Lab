@@ -3,8 +3,11 @@ One cycle per run, normally every 5 minutes (scheduled with --framework flags ba
 
   1. self-test the MT5 adapter. Missing APIs halt the cycle (fail closed).
   2. read account and open positions. Apply kill switch, drawdown and daily loss guards.
-  3. run the framework: manage open positions, then let the Bot ask every strategy
+  3. run the framework: manage open positions, reconcile, then let the Bot ask every strategy
      (scalp, engulfing, OCL) for signals. DRY_RUN=true -> alert only. DRY_RUN=false -> place orders.
+
+Only one cycle may run at a time (state/framework.lock). Fills are recorded by the framework runner the
+moment they happen, not at the end of the cycle.
 
 Run with:  ALGOLAB_PROFILE=local DRY_RUN=true python -m algolab.live.pipeline --framework
 """
@@ -18,9 +21,9 @@ from algolab.live.adapter import AccountState, AdapterError, Mt5Adapter
 from algolab.live.framework_runner import run_framework
 from algolab import strategy as S
 from algolab.ops import alerts
-from algolab.ops.risk import check_limits
-from algolab.ops.state import (ROOT, engage_kill, kill_switch_on, now_utc,
-                               ops_config, write_json)
+from algolab.ops.risk import adjusted_equity, check_limits
+from algolab.ops.state import (ROOT, LockBusy, cycle_lock, engage_kill, kill_switch_on,
+                               now_utc, ops_config, write_json)
 from algolab.profile import load_profile
 
 log = logging.getLogger("algolab.live")
@@ -43,7 +46,7 @@ def guard(acct: AccountState, ops: dict) -> tuple[bool, str]:
     if acct.open_positions is None:
         return False, "open positions unknown (MT5 terminal did not answer) - failing closed"
 
-    ok_r, why_r, breach = check_limits(acct.equity, ops["risk"])
+    ok_r, why_r, breach = check_limits(adjusted_equity(acct.equity, acct.net_deposits), ops["risk"])
     if breach:
         engage_kill(why_r)
         alerts.send("KILL SWITCH engaged: " + why_r, "CRITICAL")
@@ -74,19 +77,9 @@ async def framework_cycle() -> dict:
             write_json("framework_last_cycle.json", report)
             log.warning("framework halted: %s", reason)
             return report
-        from algolab.ops import journal
         fw = await run_framework(ad, p, symbols, acct.equity)
         if fw is not None:
             report["framework"] = fw
-            for rec in fw.get("results", []):
-                if rec.get("executed"):
-                    journal.record_open(source="framework", strategy=rec["strategy"],
-                                        symbol=rec["symbol"], side=rec["side"],
-                                        ticket=rec.get("ticket"), lots=rec["lots"],
-                                        entry=float(rec.get("fill_price") or rec.get("entry") or 0.0),
-                                        sl=rec["sl"], tp=rec.get("tp") or None)
-            for ev in fw.get("events", []):
-                journal.record_close(ev)
     write_json("framework_last_cycle.json", report)
     return report
 
@@ -95,7 +88,11 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
     try:
-        asyncio.run(framework_cycle())
+        with cycle_lock("framework"):
+            asyncio.run(framework_cycle())
+        return 0
+    except LockBusy as e:
+        log.warning("skipped: %s", e)           # another cycle is trading right now
         return 0
     except Exception as e:
         log.exception("framework cycle failed")

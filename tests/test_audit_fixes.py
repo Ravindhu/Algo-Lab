@@ -77,18 +77,29 @@ def test_lots_capped_and_zero_when_no_risk():
 
 
 # 3. journal and entry gate
-def test_journal_open_then_close_computes_signed_pnl(state):
+def test_journal_close_records_broker_pnl_and_r(state):
     journal.record_open(source="framework", strategy="ocl", symbol="EURUSD", side="BUY", ticket=7,
                         lots=0.1, entry=1.10, sl=1.09, tp=None)
     ev = journal.record_close({"strategy": "ocl", "symbol": "EURUSD", "reason": "TRAIL",
-                               "price": 1.12, "ticket": 7})
+                               "price": 1.12, "ticket": 7, "pnl": 0.02})
     assert ev["pnl"] == pytest.approx(0.02)
     assert ev["r"] == pytest.approx(2.0)                       # risk was 0.01
+    assert ev["pnl_source"] == "broker" and ev["orphan"] is False
 
 
-def test_close_without_open_is_ignored(state):
-    assert journal.record_close({"strategy": "ocl", "symbol": "EURUSD", "reason": "SL",
-                                 "price": 1.0, "ticket": 99}) is None
+def test_unknown_pnl_is_recorded_but_never_estimated(state):
+    journal.record_open(source="framework", strategy="ocl", symbol="EURUSD", side="BUY", ticket=8,
+                        lots=0.1, entry=1.10, sl=1.09, tp=None)
+    ev = journal.record_close({"strategy": "ocl", "symbol": "EURUSD", "reason": "TRAIL",
+                               "price": 1.12, "ticket": 8, "pnl": None})
+    assert ev["pnl"] is None and ev["pnl_source"] == "unknown"
+    assert journal.usable_closes() == []                       # not counted anywhere
+
+
+def test_close_without_open_is_kept_as_orphan(state):
+    ev = journal.record_close({"strategy": "ocl", "symbol": "EURUSD", "reason": "SL",
+                               "price": 1.0, "ticket": 99, "pnl": -1.5})
+    assert ev["orphan"] is True and ev["pnl"] == -1.5          # never silently dropped
 
 
 def test_gate_warm_up_then_blocks_then_checks_win_rate(state):
@@ -102,11 +113,11 @@ def test_gate_warm_up_then_blocks_then_checks_win_rate(state):
     assert not ok and "need 3" in why                           # warm-up used up, not enough closes
     for t in (1, 2):
         journal.record_close({"strategy": "ocl", "symbol": "EURUSD", "reason": "TRAIL",
-                              "price": 1.02, "ticket": t})
+                              "price": 1.02, "ticket": t, "pnl": 0.02})
     journal.record_open(source="framework", strategy="ocl", symbol="EURUSD", side="BUY", ticket=3,
                         lots=0.1, entry=1.0, sl=0.99, tp=None)
     journal.record_close({"strategy": "ocl", "symbol": "EURUSD", "reason": "TRAIL",
-                          "price": 1.02, "ticket": 3})
+                          "price": 1.02, "ticket": 3, "pnl": 0.02})
     ok, why = journal.entry_gate(cfg)
     assert ok and "lower bound" in why                          # three wins clear the 0.25 bound
 
@@ -117,7 +128,7 @@ def test_gate_blocks_a_losing_record(state):
         journal.record_open(source="framework", strategy="ocl", symbol="EURUSD", side="BUY", ticket=t,
                             lots=0.1, entry=1.0, sl=0.99, tp=None)
         journal.record_close({"strategy": "ocl", "symbol": "EURUSD", "reason": "SL",
-                              "price": 0.995, "ticket": t})
+                              "price": 0.995, "ticket": t, "pnl": -0.005})
     ok, why = journal.entry_gate(cfg)
     assert not ok and "lower bound" in why
 

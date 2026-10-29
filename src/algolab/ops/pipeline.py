@@ -9,7 +9,7 @@ import sys
 
 from algolab.agent.multi_agent import Orchestrator
 from algolab.ops import alerts
-from algolab.ops.risk import check_limits
+from algolab.ops.risk import adjusted_equity, check_limits
 from algolab.ops.state import (ROOT, engage_kill, kill_switch_on, minutes_since,
                                now_utc, ops_config, read_json, write_json)
 from algolab.profile import load_profile
@@ -41,7 +41,7 @@ def guard(p: dict, ops: dict) -> tuple[bool, str, dict]:
     if age is None or age > ops["pipeline"]["max_data_age_minutes"]:
         return False, "market data missing or stale", acct
 
-    equity = float(acct["equity"])
+    equity = adjusted_equity(float(acct["equity"]), float(acct.get("net_deposits", 0.0)))
     ok_r, why_r, breach = check_limits(equity, ops["risk"])
     if breach:
         engage_kill(why_r)
@@ -64,12 +64,17 @@ def run_cycle() -> dict:
     if may_trade:
         result = Orchestrator(p).run(int(acct.get("open_positions", 0)))
         seen = read_json("seen_signals.json", {})
+        mode = "DRY RUN" if p["dry_run"] else "LIVE"
         for d in result["take"]:
             key = f'{d["symbol"]}|{d["side"]}|{d["time"]}'
             if key in seen:
                 continue                     # already alerted for this closed bar
-            seen[key] = now_utc().isoformat()
-            report["take"].append(d)
+            text = (f'{d["symbol"]} {d["side"]} on {p["scanner"]["htf"]} | close {d.get("close")} | '
+                    f'conf {d.get("confidence")} | {d.get("reason", "")} | {mode}')
+            delivered = alerts.send(text, "WARNING")
+            report["take"].append({**d, "alerted": delivered})
+            if delivered:                    # only a delivered alert counts as sent; otherwise retried next cycle
+                seen[key] = now_utc().isoformat()
         # keep 7 days of dedupe history
         write_json("seen_signals.json", {k: v for k, v in seen.items() if minutes_since(v) < 7 * 24 * 60})
         report["reviewed"] = len(result["reviewed"])
@@ -78,11 +83,6 @@ def run_cycle() -> dict:
     stamp = now_utc().strftime("%Y%m%dT%H%M%SZ")
     (REPORT_DIR / f"cycle_{stamp}.json").write_text(json.dumps(report, indent=2, default=str))
     write_json("last_cycle.json", report)
-
-    mode = "DRY RUN" if p["dry_run"] else "LIVE"
-    for d in report["take"]:
-        alerts.send(f'{d["symbol"]} {d["side"]} on {p["scanner"]["htf"]} | RSI {d["rsi"]} | '
-                    f'conf {d["confidence"]} | {d.get("reason", "")} | {mode}', "WARNING")
     log.info("cycle done: may_trade=%s reason=%s new_signals=%d",
              may_trade, reason, len(report["take"]))
     return report

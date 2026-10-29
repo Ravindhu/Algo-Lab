@@ -20,10 +20,11 @@ sed -i "s/^User=.*/User=${APP_USER}/" /etc/systemd/system/algolab-*.service
 
 systemctl daemon-reload
 systemctl enable --now algolab-pipeline.timer algolab-health.timer \
-  algolab-backup.timer algolab-optimize.timer
+  algolab-backup.timer
 
 echo
 systemctl list-timers 'algolab-*' --no-pager
 echo
 echo "Set alert channels in $APP_DIR/.env: TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID (or ALERT_WEBHOOK_URL)."
+echo "Parameter changes are NOT automatic: run 'algolab optimize' to review, then 'algolab optimize --apply' to approve."
 echo "Kill switch: sudo -u $APP_USER touch $APP_DIR/state/KILL   (resume: rm $APP_DIR/state/KILL)"

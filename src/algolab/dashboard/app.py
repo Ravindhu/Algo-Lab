@@ -122,19 +122,23 @@ def trades_panel(s: dict) -> list:
                      "source": r.get("source", r.get("reason", "")), "strategy": r.get("strategy", ""),
                      "symbol": r.get("symbol", ""), "side": r.get("side", ""),
                      "entry": r.get("entry", r.get("price", "")), "sl": r.get("sl", ""),
-                     "pnl": round(r["pnl"], 5) if "pnl" in r else "", "R": round(r["r"], 2) if "r" in r else ""}
+                     "pnl": round(float(r["pnl"]), 2) if r.get("pnl") is not None
+                     else ("unknown" if r.get("kind") == "close" else ""),
+                     "R": round(float(r["r"]), 2) if r.get("r") is not None else ""}
                     for r in rows],
                    ["time", "kind", "source", "strategy", "symbol", "side", "entry", "sl", "pnl", "R"])
+    # Only trades with a known broker P&L are charted; unknown ones are shown in the table as "unknown".
     closes = [r for r in s["journal"] if r.get("kind") == "close"]
+    known = [r for r in closes if r.get("r") is not None]
     fig = go.Figure()
-    if closes:
+    if known:
         cum, total = [], 0.0
-        for r in closes:
+        for r in known:
             total += float(r["r"])
             cum.append(total)
         fig.add_trace(go.Scatter(y=cum, mode="lines+markers", name="cumulative R"))
     fig.update_layout(template="plotly_dark", height=260, margin=dict(l=10, r=10, t=30, b=10),
-                      title=f"Closed trades: {len(closes)} (cumulative R)")
+                      title=f"Closed trades: {len(closes)} ({len(known)} with known P&L, cumulative R)")
     return [html.H4("Trades (journal)"), dcc.Graph(figure=fig, config={"displayModeBar": False}), table]
 
 

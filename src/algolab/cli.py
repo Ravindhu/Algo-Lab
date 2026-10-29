@@ -59,7 +59,7 @@ def cmd_doctor(_) -> int:
 
 
 def cmd_backtest(_) -> int:
-    from algolab.backtest.engine import Costs, Params, load_all, run_backtest, trade_metrics
+    from algolab.backtest.engine import Costs, load_all, run_backtest, trade_metrics
     import pandas as pd
 
     from algolab import strategy as S
@@ -89,9 +89,9 @@ def cmd_sealed(args) -> int:
     return 0 if r["passed"] else 2
 
 
-def cmd_optimize(_) -> int:
+def cmd_optimize(args) -> int:
     from algolab.optimize.autotune import run_autotune
-    r = run_autotune()
+    r = run_autotune(approve=getattr(args, "apply", False))
     print(json.dumps({"applied": r["applied"], "rolled_back": r["rolled_back"],
                       "reasons": r["reasons"], "current_holdout": r["current"]["holdout"],
                       "candidate_holdout": r["candidate"]["holdout"],

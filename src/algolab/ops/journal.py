@@ -1,30 +1,42 @@
 """Trade journal: one append-only JSON-lines file in the state folder. Every executed order writes an
-"open" line. Every framework closure writes a "close" line with the price P&L (in price units, signed by
-side). The dashboard reads it, and the entry gate uses the closed trades to decide whether new entries
-are allowed.
+"open" line. Every framework closure writes a "close" line with the P&L and where it came from:
 
-Legacy engulfing trades write "open" lines only. Their exits are on the broker side and are not yet
-reported back, so they do not feed the entry gate."""
+  pnl_source = "broker"   realised profit from the broker's deal history (commission and swap included)
+  pnl_source = "unknown"  the broker history could not be read; pnl is None and the trade is NOT
+                          counted in the entry gate or in strategy selection
+
+Estimated P&L (from a stop level or a bar close) is never written: it would make the statistics look better
+or worse than the account really did.
+
+The dashboard reads it, and the entry gate and strategy selection use the closed trades with broker P&L.
+Legacy engulfing trades write "open" lines only."""
 from __future__ import annotations
 
 import json
 from typing import Any
 
 from algolab.framework.montecarlo import entry_allowed
-from algolab.ops.state import STATE_DIR, now_utc
+from algolab.ops import state as _state
+from algolab.ops.state import now_utc
 
 FILE = "journal.jsonl"
+STATE_DIR = None      # optional override (tests); None means the shared state folder, read at call time
+
+
+def _dir():
+    return STATE_DIR if STATE_DIR is not None else _state.STATE_DIR
 
 
 def _path():
-    return STATE_DIR / FILE
+    return _dir() / FILE
 
 
 def _append(rec: dict[str, Any]) -> dict[str, Any]:
-    STATE_DIR.mkdir(exist_ok=True)
+    _dir().mkdir(parents=True, exist_ok=True)
     rec = {"ts": now_utc().isoformat(timespec="seconds"), **rec}
     with _path().open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(rec, sort_keys=True, default=str) + "\n")
+        fh.flush()
     return rec
 
 
@@ -48,25 +60,38 @@ def record_open(*, source: str, strategy: str, symbol: str, side: str, ticket: i
                     "side": side, "ticket": ticket, "lots": lots, "entry": entry, "sl": sl, "tp": tp})
 
 
-def record_close(event: dict) -> dict | None:
-    """event: {strategy, symbol, reason, price, ticket} from positions.manage. Joins the matching open
-    line by ticket to compute the P&L. Returns None when no open line exists for that ticket."""
-    opened = None
-    for row in read():
-        if row.get("kind") == "open" and row.get("ticket") == event.get("ticket"):
-            opened = row
-    if opened is None:
-        return None
-    sign = 1.0 if opened["side"] == "BUY" else -1.0
-    pnl = sign * (float(event["price"]) - float(opened["entry"]))
-    risk = abs(float(opened["entry"]) - float(opened["sl"])) or 1e-12
+def _open_for(ticket) -> dict | None:
+    for row in reversed(read()):
+        if row.get("kind") == "open" and row.get("ticket") == ticket:
+            return row
+    return None
+
+
+def record_close(event: dict) -> dict:
+    """event: {strategy, symbol, reason, price, ticket, pnl (broker realised P&L or None)}.
+    Always writes a close line, so a closure can never disappear from the record."""
+    opened = _open_for(event.get("ticket"))
+    pnl = event.get("pnl")
+    pnl = None if pnl is None else float(pnl)
+    r = None
+    if pnl is not None and opened is not None:
+        risk = abs(float(opened["entry"]) - float(opened["sl"])) or 1e-12
+        r = pnl / risk
     return _append({"kind": "close", "strategy": event["strategy"], "symbol": event["symbol"],
-                    "ticket": event["ticket"], "reason": event["reason"],
-                    "price": float(event["price"]), "pnl": pnl, "r": pnl / risk})
+                    "ticket": event.get("ticket"), "reason": event["reason"],
+                    "price": float(event["price"]), "pnl": pnl, "r": r,
+                    "pnl_source": "broker" if pnl is not None else "unknown",
+                    "orphan": opened is None})
+
+
+def usable_closes(rows: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Closed trades whose P&L is known from the broker."""
+    rows = read() if rows is None else rows
+    return [r for r in rows if r.get("kind") == "close" and r.get("pnl") is not None]
 
 
 def closed_pnls(limit: int = 60) -> list[float]:
-    return [float(r["pnl"]) for r in read() if r.get("kind") == "close"][-limit:]
+    return [float(r["pnl"]) for r in usable_closes()][-limit:]
 
 
 def entry_gate(cfg: dict | None) -> tuple[bool, str]:
@@ -77,7 +102,7 @@ def entry_gate(cfg: dict | None) -> tuple[bool, str]:
     if not cfg or not cfg.get("enabled"):
         return True, "entry gate off"
     rows = read()
-    closes = [r for r in rows if r.get("kind") == "close"]
+    closes = usable_closes(rows)
     opens = [r for r in rows if r.get("kind") == "open" and r.get("source") == "framework"]
     min_trades = int(cfg["min_trades"])
     if len(closes) < min_trades:
