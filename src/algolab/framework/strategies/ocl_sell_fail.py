@@ -128,21 +128,22 @@ class HandoffStore:
 
     FILE = "framework_handoff.json"
 
-    def __init__(self, read=None, write=None):
+    def __init__(self, read=None, write=None, scope: str = ""):
         from algolab.ops.state import read_json, write_json
         self._read = read or read_json
         self._write = write or write_json
+        self._scope = scope          # "" for the BUY blueprints, "SELL:" for the inverted ones
 
     def exhausted(self, symbol: str, key: str) -> bool:
         rec = self._read(self.FILE, {})
-        entry = rec.get(symbol, {})
+        entry = rec.get(self._scope + symbol, {})
         return entry.get("key") == key and entry.get("state") == "exhausted"
 
     def mark_exhausted(self, symbol: str, key: str) -> None:
         if not key:
             return
         rec = self._read(self.FILE, {})
-        rec[symbol] = {"key": key, "state": "exhausted"}
+        rec[self._scope + symbol] = {"key": key, "state": "exhausted"}
         self._write(self.FILE, rec)
 
 
@@ -305,9 +306,9 @@ class OclSellFailBase(MultiTimeframeStrategy):
         if self.p.exit_mode != EXIT_AUTO:
             return self.p.exit_mode
         st = self.st
-        if st["aggressive"] is not None and ref >= st["aggressive"] * 0.995:
+        if st["aggressive"] is not None and ref >= st["aggressive"] - 0.005 * abs(st["aggressive"]):
             return EXIT_FIXED
-        if st["conservative"] is not None and ref <= st["conservative"] * 1.005:
+        if st["conservative"] is not None and ref <= st["conservative"] + 0.005 * abs(st["conservative"]):
             return "DYNAMIC"
         return EXIT_FIXED
 
@@ -323,10 +324,11 @@ class OclSellFailTop(OclSellFailBase):
 
     name = "ocl_sell_fail_top"
     blueprint = "TOP"
+    handoff_scope = ""
 
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
-        self._handoff = HandoffStore()
+        self._handoff = HandoffStore(scope=self.handoff_scope)
 
     def _levels(self, setup: dict[str, Any], bars: list[Bar]) -> tuple[float, float, float, float]:
         # Tier 1 (aggressive BUY) = the broken C3 open; tier 2 (conservative) = C2 open.
@@ -345,10 +347,11 @@ class OclSellFailBottom(OclSellFailBase):
 
     name = "ocl_sell_fail_bottom"
     blueprint = "BOTTOM"
+    handoff_scope = ""
 
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
-        self._handoff = HandoffStore()
+        self._handoff = HandoffStore(scope=self.handoff_scope)
 
     def _levels(self, setup: dict[str, Any], bars: list[Bar]) -> tuple[float, float, float, float]:
         swing = _lowest_swing(bars, setup["core_start"], setup["fail_index"])

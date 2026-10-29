@@ -333,9 +333,10 @@ class OclKeylevel(MultiTimeframeStrategy):
         if self.p.exit_mode != EXIT_AUTO:
             return self.p.exit_mode
         st = self.st
-        if ref >= st.aggressive * 0.995:
+        # Tolerances are relative to |level| so they stay correct for mirrored (negative) prices.
+        if ref >= st.aggressive - 0.005 * abs(st.aggressive):
             return EXIT_FIXED
-        if ref <= st.conservative * 1.005:
+        if ref <= st.conservative + 0.005 * abs(st.conservative):
             return EXIT_DYNAMIC
         return EXIT_FIXED
 

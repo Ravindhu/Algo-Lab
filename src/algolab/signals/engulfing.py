@@ -59,12 +59,30 @@ def hm_confirmed(closes: list[float], rsi_period: int = 9, ema_period: int = 3) 
     return d if d != 0 else None
 
 
-def engulfing(df: pd.DataFrame) -> pd.Series:
-    """+1 bullish engulfing, -1 bearish engulfing, 0 none (evaluated per bar)."""
+DEFAULT_MIN_BODY_PCT = 0.5
+
+
+def body_ratio(df: pd.DataFrame) -> pd.Series:
+    """Candle body as a share of its full range (high - low). 0 where the range is 0."""
+    rng = df["high"] - df["low"]
+    body = (df["close"] - df["open"]).abs()
+    return (body / rng.where(rng > 0)).fillna(0.0)
+
+
+def engulfing(df: pd.DataFrame, min_body_pct: float = DEFAULT_MIN_BODY_PCT) -> pd.Series:
+    """+1 bullish engulfing, -1 bearish engulfing, 0 none (evaluated per bar).
+
+    Both candles of the pattern (the engulfed one and the engulfing one) must have a body larger than
+    min_body_pct of their range. The default is 0.5, i.e. more than 50 percent. Set it to 0 to ignore body size."""
     o, c = df["open"], df["close"]
     po, pc = o.shift(), c.shift()
     bull = (pc < po) & (c > o) & (o <= pc) & (c >= po)
     bear = (pc > po) & (c < o) & (o >= pc) & (c <= po)
+    if min_body_pct > 0:
+        if not {"high", "low"} <= set(df.columns):
+            raise ValueError("body filter needs high and low columns")
+        ok = (body_ratio(df) > min_body_pct) & (body_ratio(df).shift() > min_body_pct)
+        bull, bear = bull & ok, bear & ok
     return pd.Series(np.where(bull, 1, np.where(bear, -1, 0)), index=df.index)
 
 

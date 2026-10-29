@@ -30,17 +30,32 @@ from algolab.live.adapter import AdapterError, PartialClose
 log = logging.getLogger("algolab.positions")
 
 
+def _mirror_of(side: str) -> int:
+    """+1 for BUY, -1 for SELL. A SELL trade is tracked in mirrored prices (see the module note)."""
+    return -1 if side == "SELL" else 1
+
+
+def _broker_side(rec: dict) -> int:
+    """The side the broker sees, used to close: +1 for a BUY position, -1 for a SELL position."""
+    return _mirror_of(rec.get("side", "BUY"))
+
+
 def new_record(rec: dict, *, strategy: str, ltf: str, htf: str) -> dict:
-    """Build the tracked record from a Bot result that really filled."""
+    """Build the tracked record from a Bot result that really filled.
+
+    A SELL trade is stored with every price negated. Protect.Trade then runs its BUY rules unchanged, and the
+    manager feeds it negated bars, so the same code protects both sides."""
+    side = rec.get("side", "BUY")
+    m = _mirror_of(side)
     fill = float(rec["fill_price"])
     tp = float(rec["tp"]) if float(rec.get("tp") or 0) > 0 else None
     protect = Protection.from_dict(rec["protect"])
-    trade = Trade.open(entry=fill, trigger=float(rec["trigger"]), htf_sl=float(rec["htf_sl"]),
-                       broker_sl=float(rec["sl"]), tp=tp, p=protect,
+    trade = Trade.open(entry=m * fill, trigger=m * float(rec["trigger"]), htf_sl=m * float(rec["htf_sl"]),
+                       broker_sl=m * float(rec["sl"]), tp=None if tp is None else m * tp, p=protect,
                        pip=ForexSymbol(rec["symbol"]).pip)
     delta = TimeFrame(ltf).seconds
     return {
-        "ticket": int(rec["ticket"]), "strategy": strategy, "symbol": rec["symbol"],
+        "ticket": int(rec["ticket"]), "strategy": strategy, "symbol": rec["symbol"], "side": side,
         "ltf": ltf, "htf": htf, "volume": float(rec["lots"]),
         "protect": protect.to_dict(), "trade": trade.to_dict(),
         "atr_period": int(rec.get("atr_period", 14)),
@@ -64,13 +79,15 @@ def _realized(ad, ticket: int) -> float | None:
         return None
 
 
-def _classify(trade: Trade, new_bars: pd.DataFrame) -> tuple[str, float]:
-    for _, row in new_bars.iterrows():
-        if float(row["low"]) <= trade.broker_sl:
+def _classify(trade: Trade, lows: list[float], highs: list[float], closes: list[float]) -> tuple[str, float]:
+    """Closure reason from the bars since the last cycle. Inputs and the returned price are in trade space
+    (mirrored for SELL, so the caller converts the price back)."""
+    for lo, hi in zip(lows, highs):
+        if lo <= trade.broker_sl:
             return "DISASTER", trade.broker_sl
-        if trade.tp is not None and float(row["high"]) >= trade.tp:
+        if trade.tp is not None and hi >= trade.tp:
             return "TP", trade.tp
-    last = float(new_bars["close"].iloc[-1]) if len(new_bars) else trade.entry
+    last = closes[-1] if closes else trade.entry
     return "BROKER_CLOSE", last
 
 
@@ -95,30 +112,37 @@ async def _manage_one(ad, rec: dict, live_pos, magic: int, deviation: int, lookb
     protect = Protection.from_dict(rec["protect"])
     trade = Trade.from_dict(rec["trade"])
     delta = pd.Timedelta(seconds=rec["delta_s"])
+    m = _mirror_of(rec.get("side", "BUY"))        # trade space: prices negated for SELL
+    side = _broker_side(rec)
 
     bars = await ad.candles(sym, ltf, lookback)
     closed = bars.iloc[:-1]
-    highs = [float(x) for x in closed["high"]]
-    lows = [float(x) for x in closed["low"]]
-    closes = [float(x) for x in closed["close"]]
+    if m > 0:
+        highs = [float(x) for x in closed["high"]]
+        lows = [float(x) for x in closed["low"]]
+        closes = [float(x) for x in closed["close"]]
+    else:                                         # SELL: the mirrored chart swaps high and low
+        highs = [-float(x) for x in closed["low"]]
+        lows = [-float(x) for x in closed["high"]]
+        closes = [-float(x) for x in closed["close"]]
     atr_vals = atr_series(highs, lows, closes, period=rec.get("atr_period", 14))
     start = pd.Timestamp(rec["last_bar"])
     positions = [i for i, t in enumerate(closed.index) if t >= start]
-    new_bars = closed.iloc[positions]
 
     if live_pos is None:
-        reason, price = _classify(trade, new_bars)
-        return _event(rec, reason, price, _realized(ad, rec["ticket"]))
+        new = positions
+        reason, price = _classify(trade, [lows[i] for i in new], [highs[i] for i in new],
+                                  [closes[i] for i in new])
+        return _event(rec, reason, m * price, _realized(ad, rec["ticket"]))
 
     last_bar = rec["last_bar"]
     for pos in positions:
         idx = closed.index[pos]
-        high, close = float(closed["high"].iloc[pos]), float(closed["close"].iloc[pos])
-        reason = trade.on_closed_bar(high=high, close=close, atr=atr_vals[pos], p=protect)
+        reason = trade.on_closed_bar(high=highs[pos], close=closes[pos], atr=atr_vals[pos], p=protect)
         last_bar = str(idx + delta)
         if reason:
             try:
-                fill, pnl = _close_at_market(ad, rec, trade.side, magic, deviation)
+                fill, pnl = _close_at_market(ad, rec, side, magic, deviation)
             except _StillOpen:
                 return None                  # nothing saved: the same bar is re-evaluated next cycle
             rec["last_bar"], rec["trade"] = last_bar, trade.to_dict()
@@ -126,9 +150,9 @@ async def _manage_one(ad, rec: dict, live_pos, magic: int, deviation: int, lookb
 
     hbars = await ad.candles(sym, htf, 10)
     hclosed = hbars.iloc[:-1]
-    if len(hclosed) and float(hclosed["close"].iloc[-1]) < trade.htf_sl:
+    if len(hclosed) and m * float(hclosed["close"].iloc[-1]) < trade.htf_sl:
         try:
-            fill, pnl = _close_at_market(ad, rec, trade.side, magic, deviation)
+            fill, pnl = _close_at_market(ad, rec, side, magic, deviation)
         except _StillOpen:
             return None
         rec["last_bar"], rec["trade"] = last_bar, trade.to_dict()

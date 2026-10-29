@@ -40,7 +40,8 @@ def _with_forming(df: pd.DataFrame, pos: int, lookback: int) -> pd.DataFrame:
 def run_ocl_backtest(strategy: OclKeylevel, htf: pd.DataFrame, ltf: pd.DataFrame, costs: Costs,
                      quote_to_account: float | pd.Series = 1.0,
                      prop: PropGuard | None = None) -> pd.DataFrame:
-    strategy.st = SetupState()
+    # Fresh state for the blueprint: SetupState for OCL, the dict state for the sell-failure blueprints.
+    strategy.st = strategy._new_state() if hasattr(strategy, "_new_state") else SetupState()
     p = strategy.p
     protection = p.protection
     lb = p.lookback
@@ -154,3 +155,21 @@ def run_ocl_backtest(strategy: OclKeylevel, htf: pd.DataFrame, ltf: pd.DataFrame
     if trade is not None:
         close(len(ltf) - 1, float(c[-1]), "EOD")
     return pd.DataFrame(trades)
+
+
+def run_inverse_backtest(strategy, htf: pd.DataFrame, ltf: pd.DataFrame, costs: Costs,
+                         quote_to_account: float | pd.Series = 1.0,
+                         prop: PropGuard | None = None) -> pd.DataFrame:
+    """SELL-side backtest of a BUY blueprint. The candles are mirrored (see strategies/ocl_inverse.py), the
+    BUY backtest runs unchanged, and the price columns are mirrored back. P&L is already the short P&L,
+    because the mirror turns a long profit (exit - entry) into entry - exit."""
+    from algolab.framework.strategies.ocl_inverse import mirror_frame
+
+    trades = run_ocl_backtest(strategy, mirror_frame(htf), mirror_frame(ltf), costs,
+                              quote_to_account, prop)
+    if len(trades):
+        for col in ("entry", "exit", "sl", "tp", "htf_sl", "trail"):
+            if col in trades:
+                trades[col] = -pd.to_numeric(trades[col], errors="coerce")
+        trades["side"] = "SELL"
+    return trades
