@@ -1,0 +1,12 @@
+[Unit]
+Description=AlgoLab daily high-performance strategy selection (updates framework.json enabled flags)
+OnFailure=algolab-notify@%n.service
+
+[Service]
+Type=oneshot
+User=algo
+WorkingDirectory=/opt/algolab
+EnvironmentFile=/opt/algolab/.env
+Environment=ALGOLAB_PROFILE=vps
+ExecStart=/opt/algolab/.venv/bin/python -m algolab.optimize.selection --apply
+TimeoutStartSec=600

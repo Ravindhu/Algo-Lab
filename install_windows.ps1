@@ -25,7 +25,8 @@ $Py = Join-Path $Venv "Scripts\python.exe"
 $Mt5Exe = "C:\Program Files\MetaTrader 5\terminal64.exe"
 $TaskSync = "AlgoLab-Sync"
 $TaskFw = "AlgoLab-Framework"
-$Tasks = @($TaskSync, $TaskFw)
+$TaskSelect = "AlgoLab-Select"
+$Tasks = @($TaskSync, $TaskFw, $TaskSelect)
 
 function Step([string]$msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 
@@ -104,10 +105,12 @@ function Register-AlgoTasks {
   $duration = New-TimeSpan -Days 3650
 
   # Sync (minute 0), then the framework cycle 2 minutes later so a lower timeframe sees a
-  # fresh closed bar every 5 minutes.
+  # fresh closed bar every 5 minutes. The strategy selector runs once per day at 03:00
+  # (off trading hours): it ranks strategies on live closes and updates framework.json.
   $defs = @(
-    @{ Name = $TaskSync; Args = "-m algolab.bridge.windows_sync";       Start = (Get-Date).AddMinutes(1); Every = $FrameworkMinutes },
-    @{ Name = $TaskFw;   Args = "-m algolab.live.pipeline --framework"; Start = (Get-Date).AddMinutes(2); Every = $FrameworkMinutes }
+    @{ Name = $TaskSync;   Args = "-m algolab.bridge.windows_sync";       Start = (Get-Date).AddMinutes(1); Every = $FrameworkMinutes },
+    @{ Name = $TaskFw;     Args = "-m algolab.live.pipeline --framework"; Start = (Get-Date).AddMinutes(2); Every = $FrameworkMinutes },
+    @{ Name = $TaskSelect; Args = "-m algolab.optimize.selection --apply"; Start = (Get-Date).Date.AddHours(3); Every = 1440 }
   )
   foreach ($d in $defs) {
     $repeat = New-TimeSpan -Minutes $d.Every

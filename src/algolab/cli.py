@@ -106,6 +106,15 @@ def cmd_dashboard(_) -> int:
     return 0
 
 
+def cmd_select(args) -> int:
+    from algolab.optimize.selection import apply_selection
+    r = apply_selection(dry_run=not getattr(args, "apply", False))
+    print(json.dumps({"top_n": r["top_n"], "keep": r["keep"],
+                      "changes": r["changes"], "ranks": r["ranks"]},
+                     indent=2, default=str))
+    return 0
+
+
 def cmd_status(_) -> int:
     live = read_json("live_last_cycle.json", {})
     health = read_json("health.json", {})
@@ -138,7 +147,7 @@ def cmd_resume(_) -> int:
 COMMANDS = {"doctor": cmd_doctor, "backtest": cmd_backtest, "validate": cmd_validate,
             "sealed": cmd_sealed,
             "optimize": cmd_optimize, "dashboard": cmd_dashboard, "status": cmd_status,
-            "kill": cmd_kill, "resume": cmd_resume}
+            "kill": cmd_kill, "resume": cmd_resume, "select": cmd_select}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -146,6 +155,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command", choices=list(COMMANDS))
     parser.add_argument("--force", action="store_true",
                         help="sealed: run again for the same parameters (weakens the sealed test)")
+    parser.add_argument("--apply", action="store_true",
+                        help="select: write framework.json (default: report only)")
     args = parser.parse_args(argv)
     return COMMANDS[args.command](args)
 

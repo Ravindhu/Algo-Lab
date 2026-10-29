@@ -1,0 +1,7 @@
+{
+  "top_n": 3,
+  "min_trades": 20,
+  "min_profit_factor": 1.0,
+  "min_lower_bound": 0.35,
+  "note": "top_n = how many strategies the Bot may run. min_trades = closed trades needed before a strategy can be ranked. min_lower_bound = 95% Wilson lower bound on win rate."
+}
