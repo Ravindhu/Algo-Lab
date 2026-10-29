@@ -1,0 +1,9 @@
+[Unit]
+Description=Send alert for failed unit %i
+
+[Service]
+Type=oneshot
+User=algo
+WorkingDirectory=/opt/algolab
+EnvironmentFile=/opt/algolab/.env
+ExecStart=/opt/algolab/.venv/bin/python -m algolab.ops.notify %i

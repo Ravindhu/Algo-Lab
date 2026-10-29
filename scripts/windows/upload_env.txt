@@ -1,0 +1,7 @@
+# WinSCP script: uploads .env to the VPS over SFTP (SSH). Replace the <...> values.
+option batch abort
+option confirm off
+open sftp://<VPS_USER>@<VPS_HOST>/ -privatekey="C:\keys\algolab.ppk" -hostkey="<SSH-ED25519 fingerprint>"
+put "C:\algolab\.env" "/opt/algolab/.env"
+chmod 600 "/opt/algolab/.env"
+exit

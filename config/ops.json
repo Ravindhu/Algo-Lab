@@ -1,0 +1,20 @@
+{
+  "symbols": ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY"],
+  "pipeline": {
+    "max_data_age_minutes": 60,
+    "max_account_age_minutes": 45
+  },
+  "risk": {
+    "max_daily_loss": 0.03,
+    "max_drawdown_kill": 0.15
+  },
+  "health": {
+    "min_free_disk_gb": 2
+  },
+  "alerts": {
+    "dedupe_minutes": 60
+  },
+  "backup": {
+    "keep_days": 14
+  }
+}

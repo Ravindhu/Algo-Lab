@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "algolab"
+version = "0.2.0"
+requires-python = ">=3.13"
+dependencies = [
+  "pandas>=2.2",
+  "numpy>=2.0",
+  "plotly>=5.22",
+  "dash>=2.17",
+  "scikit-learn>=1.5",
+  "python-dotenv>=1.0",
+  "httpx>=0.27",
+  "mcp>=1.2",
+  "anthropic>=0.40",
+  "joblib>=1.4",
+  "optuna>=3.6",
+]
+
+[project.scripts]
+algolab = "algolab.cli:main"
+
+[project.optional-dependencies]
+live = [
+  "MetaTrader5>=5.0.45; sys_platform == 'win32'",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

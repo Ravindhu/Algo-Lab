@@ -1,0 +1,42 @@
+{
+  "enabled": false,
+  "active_profile": "generic_2step_example",
+  "profiles": {
+    "generic_2step_example": {
+      "description": "EXAMPLE VALUES ONLY. Copy the real numbers from your firm's current terms before enabling.",
+      "rules": {
+        "starting_balance": 10000,
+        "profit_target_pct": 10,
+        "max_daily_loss_pct": 5,
+        "max_total_loss_pct": 10,
+        "trailing_drawdown": false,
+        "min_trading_days": 4,
+        "max_risk_per_trade_pct": 1.0,
+        "max_open_positions": 1,
+        "max_lots": 1.0,
+        "close_before_weekend": true,
+        "weekend_close_hour_utc": 20,
+        "day_reset_hour_utc": 0,
+        "safety_buffer_pct": 0.5
+      }
+    },
+    "generic_funded_example": {
+      "description": "EXAMPLE VALUES ONLY. Funded-stage style: no profit target, trailing total drawdown.",
+      "rules": {
+        "starting_balance": 10000,
+        "profit_target_pct": 0,
+        "max_daily_loss_pct": 4,
+        "max_total_loss_pct": 8,
+        "trailing_drawdown": true,
+        "min_trading_days": 0,
+        "max_risk_per_trade_pct": 0.5,
+        "max_open_positions": 1,
+        "max_lots": 0.5,
+        "close_before_weekend": true,
+        "weekend_close_hour_utc": 20,
+        "day_reset_hour_utc": 0,
+        "safety_buffer_pct": 0.5
+      }
+    }
+  }
+}

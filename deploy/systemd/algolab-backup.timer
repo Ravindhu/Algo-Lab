@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily AlgoLab backup at 03:10 UTC
+
+[Timer]
+OnCalendar=*-*-* 03:10:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

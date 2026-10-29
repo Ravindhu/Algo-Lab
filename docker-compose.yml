@@ -1,0 +1,24 @@
+services:
+  mcp:
+    build: .
+    command: ["python", "-m", "algolab.mcp.server"]
+    env_file: .env
+    environment:
+      - ALGOLAB_PROFILE=${ALGOLAB_PROFILE:-vps}
+    ports:
+      - "127.0.0.1:8765:8765"        # localhost only; reach it via SSH tunnel
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+  dashboard:
+    build: .
+    command: ["python", "scripts/run_dashboard.py"]
+    env_file: .env
+    ports:
+      - "127.0.0.1:8050:8050"        # expose to trusted IP via ufw / reverse proxy
+    volumes:
+      - ./reports:/app/reports
+    restart: unless-stopped
