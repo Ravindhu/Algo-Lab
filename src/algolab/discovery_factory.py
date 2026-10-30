@@ -40,6 +40,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+# Live Hilega-Milega math (the same functions the live strategies use). Pure numpy, no MT5.
+from algolab.framework.strategies.indicators import hm_ema_series, hm_rsi_series
+
 # --------------------------------------------------------------------------------------
 # numba is optional but makes everything ~10-20x faster.   pip install numba
 # --------------------------------------------------------------------------------------
@@ -515,6 +518,14 @@ def f_macd(I, p):
     return _sig(_xup(m, s), _xdn(m, s), p["inv"])
 
 
+def f_hm_cross(I, p):
+    """Hilega-Milega entry: the HM RSI crosses its own EMA. Uses the LIVE HM math (simple-average
+    RSI and the seeded EMA from indicators/hm.py), so the signals match the live strategy."""
+    r = I._memo(("hm_rsi", p["rsi_n"]), lambda: hm_rsi_series(I.c, p["rsi_n"]))
+    line = I._memo(("hm_line", p["rsi_n"], p["ema_n"]), lambda: hm_ema_series(r, p["ema_n"]))
+    return _sig(_xup(r, line), _xdn(r, line), p["inv"])
+
+
 def f_rsi_rev(I, p):
     r = I.rsi(p["n"])
     return _sig(r < p["lo"], r > p["hi"])
@@ -616,6 +627,7 @@ FAMILIES = {
     "engulfing_ocl":  dict(fn=f_engulfing_ocl, space=dict(rsi_period=("i", 5, 21), ema_period=("i", 2, 8), inv=INV)),
     "ema_cross":      dict(fn=f_ema_cross, space=dict(fast=("i", 3, 30), slow=("i", 20, 200), inv=INV)),
     "macd_cross":     dict(fn=f_macd, space=dict(fast=("i", 5, 20), slow=("i", 15, 50), sig=("i", 3, 15), inv=INV)),
+    "hm_cross":       dict(fn=f_hm_cross, space=dict(rsi_n=("i", 5, 21), ema_n=("i", 2, 9), inv=INV)),
     "rsi_reversion":  dict(fn=f_rsi_rev, space=dict(n=("i", 2, 21), lo=("i", 10, 35), hi=("i", 65, 90))),
     "boll_reversion": dict(fn=f_boll_rev, space=dict(n=("i", 10, 60), k=("f", 1.5, 3.0))),
     "boll_breakout":  dict(fn=f_boll_break, space=dict(n=("i", 10, 60), k=("f", 1.5, 3.0), inv=INV)),

@@ -1,0 +1,14 @@
+# TEMPLATE plugin (not enabled by default): Hilega-Milega RSI cross on M15.
+# Same entry rule as the discovery family "hm_cross". Copy this file for a new strategy.
+{
+  "type": "plain_template",
+  "enabled": false,
+  "params": {
+    "timeframe": "M15",
+    "rsi_period": 9,
+    "ema_period": 3,
+    "atr_period": 14,
+    "sl_mult": 1.5,
+    "tp_mult": 3.0
+  }
+}
