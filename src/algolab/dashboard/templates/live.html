@@ -153,28 +153,45 @@ function line(c,a,col,fill,min,max){const[x,w,h]=fit(c);min=min??Math.min(...a);
  if(fill){x.lineTo(w,h);x.lineTo(0,h);x.fillStyle=col+'22';x.fill()}return[x,w,h]}
 const F='11px "JetBrains Mono",monospace';
 function NET(x,w,h){
- const cy=h/2,X=[.045,.15,.29,.41,.52,.63,.73,.84,.96].map(v=>v*w),on=!killed,d=(ddh[ddh.length-1]||0)/DDLIM,rk=d>.7?'#ff4d6d':d>.4?'#ffb347':'#2ee6a6',
- rank=S.map((s,i)=>i).sort((a,b)=>S[b].p-S[a].p),
- N={data:[X[0],cy],opt:[X[2],cy-34],bt:[X[2],cy+34],gate:[X[3],cy],bot:[X[4],cy],ord:[X[5],cy]},
- sp=i=>[X[1],h*.2+rank.indexOf(i)*h*.15],ap=i=>[X[7],h*(.3+.2*i)],yp=i=>[X[8],h*(.2+.2*i)],
- ln=(a,b,c,wd)=>{x.strokeStyle=c;x.lineWidth=wd;x.beginPath();x.moveTo(a[0],a[1]);x.lineTo(b[0],b[1]);x.stroke()};
+ const F='10px "JetBrains Mono",monospace',FS='9px "JetBrains Mono",monospace';
+ const cy=h*.5,top=h*.2,bot=h*.8,on=!killed;
+ const X=[.04,.17,.32,.45,.58,.70,.82,.92].map(v=>v*w);
+ const rank=S.map((s,i)=>i).sort((a,b)=>S[b].p-S[a].p);
+ const N={data:[X[0],cy],opt:[X[2],cy-h*.2],bt:[X[2],cy+h*.2],gate:[X[3],cy],bot:[X[4],cy],ord:[X[5],cy]};
+ const sp=i=>[X[1],top+rank.indexOf(i)*(bot-top)/4],ap=i=>[X[6],top+i*(bot-top)/2],yp=k=>[X[7],top+k*(bot-top)/3];
+ const ln=(a,b,c,wd)=>{x.strokeStyle=c;x.lineWidth=wd;x.beginPath();x.moveTo(a[0],a[1]);x.lineTo(b[0],b[1]);x.stroke()};
+ const dot=(p,r,c)=>{x.fillStyle='#060e18';x.strokeStyle=c;x.lineWidth=1.6;x.beginPath();x.arc(p[0],p[1],r,0,7);x.fill();x.stroke()};
+ const txt=(t,p,c,font,align)=>{x.fillStyle=c;x.font=font;x.textAlign=align||'center';x.fillText(t,p[0],p[1])};
  x.globalAlpha=1;
+ // wires
  S.forEach((s,i)=>{const p=sp(i);ln(N.data,p,'#1d4a66',.8);ln(p,N.opt,on&&s.on?(s.p>=0?'#2ee6a6':'#ff4d6d'):'#3a4a5a',.6+Math.min(3,s.t/6))});
  [[N.bt,N.gate],[N.gate,N.bot],[N.bot,N.ord]].forEach(([a,b])=>ln(a,b,on?'#2a6a8f':'#3a4a5a',1.4));
  AC.forEach((a,i)=>{ln(N.ord,ap(i),'#2a6a8f',.8+a.s*5);const t=a.c.reduce((p,q)=>p+q,0)||1;a.c.forEach((c,k)=>ln(ap(i),yp(k),'#1f5878',.4+c/t*5))});
- x.setLineDash([3,3]);ln(N.opt,N.bt,'#ffb347',1.2);
- x.setLineDash([5,5]);x.strokeStyle='#ffb347';x.lineWidth=1.2;x.beginPath();x.moveTo(N.gate[0],N.gate[1]-14);x.quadraticCurveTo((N.gate[0]+X[1])/2,0,X[1],h*.2-18);x.stroke();x.setLineDash([]);
- x.fillStyle='#ffb347';x.textAlign='center';x.font=F;x.fillText('feedback loop: you approve (--apply)',(N.gate[0]+X[1])/2,62);
+ x.setLineDash([3,3]);ln(N.opt,N.bt,'#ffb347',1.2);x.setLineDash([]);
+ // feedback loop: gate back up to the strategy column (caption sits at the top, clear of the nodes)
+ x.setLineDash([5,5]);x.strokeStyle='#ffb347';x.lineWidth=1.2;x.beginPath();x.moveTo(N.gate[0],N.gate[1]-14);x.quadraticCurveTo(N.gate[0],top-60,X[1]+70,top-30);x.stroke();x.setLineDash([]);
+ txt('feedback: you approve (--apply)',[X[3]+14,12],'#ffb347',FS,'left');
+ // particles
  const fs=S.reduce((a,s)=>a+s.f,0);S.forEach(s=>s.f*=.97);
  if(on&&Math.random()<.05+fs*.2){const en=S.map((q,i)=>i).filter(i=>S[i].on);if(en.length)NP.push({s:en[Math.floor(Math.random()*en.length)],a:pick(AC),k:pick(SY),u:0,die:Math.random()<.25?.35+Math.random()*.3:2})}
  NP=NP.filter(q=>{q.u+=.005;if(q.u>=1||q.u>q.die)return false;const Q=[N.data,sp(q.s),N.opt,N.bt,N.gate,N.bot,N.ord,ap(q.a),yp(q.k)],k=Math.min(7,Math.floor(q.u*8)),f=q.u*8-k,a=Q[k],b=Q[k+1];x.fillStyle=S[q.s].c;x.beginPath();x.arc(a[0]+(b[0]-a[0])*f,a[1]+(b[1]-a[1])*f,3,0,7);x.fill();return true});
- const nd=(p,r,c,l,sub)=>{x.fillStyle='#060e18';x.strokeStyle=c;x.lineWidth=1.6;x.beginPath();x.arc(p[0],p[1],r,0,7);x.fill();x.stroke();x.fillStyle=c;x.textAlign='center';x.font=F;x.fillText(l,p[0],p[1]+r+12);if(sub){x.fillStyle='#5d7b94';x.fillText(sub,p[0],p[1]+r+23)}};
- S.forEach((s,i)=>nd(sp(i),8+s.f*4,on&&s.on?s.c:'#3a4a5a','#'+(rank.indexOf(i)+1)+' '+s.n,fm(s.p)));
- nd(N.data,10,'#3fd0ff','Data','MT5 bars');nd(N.opt,10,'#ffb347','Optimizer','report only');nd(N.bt,10,'#ffb347','Backtest','real history');
- nd(N.gate,11,'#2ee6a6','Validate','PASS');nd(N.bot,15,on?'#3fd0ff':'#7a8794','Bot','ML + LLM inside');nd(N.ord,11,'#ffb347','Order','DRY_RUN');
- AC.forEach((a,i)=>nd(ap(i),9,on?'#2ee6a6':'#3a4a5a',a.n,Math.round(a.s*100)+'% · '+fm(a.pnl)));
- const tot=SY.reduce((p,y)=>p+y.k,0)||1;SY.forEach((y,k)=>nd(yp(k),9,'#3fd0ff',y.n,Math.round(y.k/tot*100)+'%'));
- x.fillStyle='#3d5a70';x.font=F;[['DATA',0],['TOP 5 STRATEGIES',1],['OPTIMIZE LOOP',2],['GATE',3],['BOT',4],['ORDER',5],['ACCOUNTS',7],['SYMBOLS',8]].forEach(([t,i])=>x.fillText(t,X[i],h-12));
+ // strategies: "#rank name P&L" on one line above each node
+ S.forEach((s,i)=>{const p=sp(i),r=7+s.f*3,c=on&&s.on?s.c:'#3a4a5a';dot(p,r,c);txt('#'+(rank.indexOf(i)+1)+' '+s.n+'  '+fm(s.p),[p[0],p[1]-r-7],c,FS)});
+ // core nodes: name below, detail below that
+ dot(N.data,10,'#3fd0ff');txt('Data',[N.data[0],N.data[1]+22],'#3fd0ff',F);txt('MT5 bars',[N.data[0],N.data[1]+34],'#5d7b94',FS);
+ dot(N.opt,10,'#ffb347');txt('Optimizer',[N.opt[0],N.opt[1]-16],'#ffb347',F);
+ dot(N.bt,10,'#ffb347');txt('Backtest',[N.bt[0],N.bt[1]+22],'#ffb347',F);txt('real history',[N.bt[0],N.bt[1]+34],'#5d7b94',FS);
+ dot(N.gate,11,'#2ee6a6');txt('Validate',[N.gate[0],N.gate[1]+24],'#2ee6a6',F);txt('PASS',[N.gate[0],N.gate[1]+36],'#5d7b94',FS);
+ dot(N.bot,15,on?'#3fd0ff':'#7a8794');txt('Bot',[N.bot[0],N.bot[1]+30],on?'#3fd0ff':'#7a8794',F);txt('ML + LLM inside',[N.bot[0],N.bot[1]+42],'#5d7b94',FS);
+ dot(N.ord,11,'#ffb347');txt('Order',[N.ord[0],N.ord[1]+24],'#ffb347',F);txt('DRY_RUN',[N.ord[0],N.ord[1]+36],'#5d7b94',FS);
+ // accounts: name above, share and P&L below
+ AC.forEach((a,i)=>{const p=ap(i);dot(p,9,on?'#2ee6a6':'#3a4a5a');txt(a.n,[p[0],p[1]-14],on?'#2ee6a6':'#3a4a5a',F);txt(Math.round(a.s*100)+'% · '+fm(a.pnl),[p[0],p[1]+22],'#5d7b94',FS)});
+ // symbols: name and share below each node
+ const tot=SY.reduce((p,y)=>p+y.k,0)||1;
+ SY.forEach((y,k)=>{const p=yp(k);dot(p,8,'#3fd0ff');txt(y.n+' '+Math.round(y.k/tot*100)+'%',[p[0],p[1]+20],'#3fd0ff',FS)});
+ // stage footer, one label per column
+ x.fillStyle='#3d5a70';x.font=FS;x.textAlign='center';
+ [['DATA',0],['TOP 5 STRATEGIES',1],['OPTIMIZE',2],['GATE',3],['BOT',4],['ORDER',5],['ACCOUNTS',6],['SYMBOLS',7]].forEach(([t,i])=>x.fillText(t,X[i],h-8));
 }
 function draw(){
  {const last=eqh[eqh.length-1],elo=Math.min(START,...eqh)-150,ehi=Math.max(START,...eqh)+150,[x,w,h]=line($('ce'),eqh,last>=START?'#2ee6a6':'#ff4d6d',true,elo,ehi),by=h-4-(START-elo)/(ehi-elo)*(h-8);
