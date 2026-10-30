@@ -59,7 +59,8 @@ def snapshot() -> dict:
             "framework": _j(STATE_DIR / "framework_last_cycle.json", {}),
             "journal": journal.read(), "sealed": _j(STATE_DIR / "sealed_result.json", {}),
             "calibration": memory.recall("calibration", 200),
-            "mistakes": memory.recall("mistake", 20), "working": memory.recall("working", 5)}
+            "mistakes": memory.recall("mistake", 20), "working": memory.recall("working", 5),
+            "discovery": _j(REPORTS / "discovery.json", {})}
 
 
 def _card(title: str, value, note: str = "") -> html.Div:
@@ -212,9 +213,66 @@ def opt_figure(metric: str) -> go.Figure:
     return fig
 
 
+def _num(x, nd: int = 2):
+    try:
+        return round(float(x), nd)
+    except (TypeError, ValueError):
+        return ""
+
+
+GATE_LABELS = [("min_pf", "Validation PF >="), ("min_beat_random", "Beat random >="),
+               ("min_nudge", "Nudge ok >="), ("max_dd", "Monte Carlo DD95 <= %"),
+               ("min_train_trades", "Min trades: train"), ("min_val_trades", "Min trades: validation"),
+               ("min_test_trades", "Min trades: hold-out")]
+
+
+def discovery_panel(s: dict) -> list:
+    """Shows the last discovery run (reports/discovery.json, written by algolab.discovery_factory).
+    Read-only. Gate values come from that run's saved settings, so nothing is hard-coded here."""
+    rep = s.get("discovery") or {}
+    if not rep:
+        return [html.Div("No discovery run yet. Run: python -m algolab.discovery_factory "
+                         "(add --demo to try it on synthetic data).", style={"opacity": 0.7})]
+    cfg = rep.get("settings", {})
+    cands = rep.get("candidates") or []
+    cards = [
+        _card("Candidates passing every gate", len(cands), rep.get("note", "")),
+        _card("Last run", (rep.get("generated_at") or "-")[:16].replace("T", " "), "UTC"),
+        _card("Applied to live", "NO" if not rep.get("applied") else "YES",
+              "report only: a person promotes a candidate by hand"),
+    ]
+    funnel_rows = [{k: f.get(k, "") for k in ("dataset", "candidates", "val", "rand", "mc", "nudge", "holdout")}
+                   for f in (rep.get("funnel") or [])]
+    gate_rows = [{"gate": label, "value": cfg.get(key, "-")} for key, label in GATE_LABELS]
+    cand_rows = []
+    for i, r in enumerate(cands, 1):
+        t = r.get("test") or {}
+        cand_rows.append({"rank": i, "symbol": r.get("symbol"), "tf": r.get("tf"),
+                          "family": (r.get("genome") or {}).get("fam"), "score": _num(r.get("score"), 1),
+                          "trades": r.get("trades"), "hold-out PF": _num(t.get("pf")),
+                          "exp R": _num(t.get("exp"), 3), "win %": _num(t.get("wr"), 1),
+                          "MC DD95 %": _num(r.get("mc_dd95"), 1), "nudge": r.get("nudge"),
+                          "rule": r.get("desc", "")})
+    return [html.Div(cards, style={"display": "flex", "flexWrap": "wrap"}),
+            html.H4("Gate funnel (genomes reaching each stage)"),
+            _table(funnel_rows, ["dataset", "candidates", "val", "rand", "mc", "nudge", "holdout"]),
+            html.H4("Gate rules (from the last run's settings)"),
+            _table(gate_rows, ["gate", "value"]),
+            html.H4("Top candidates"),
+            _table(cand_rows, ["rank", "symbol", "tf", "family", "score", "trades", "hold-out PF",
+                               "exp R", "win %", "MC DD95 %", "nudge", "rule"]),
+            html.Div("An empty result is a valid result. Never loosen gates to force a winner.",
+                     style={"opacity": 0.6, "marginTop": "8px"})]
+
+
+NAV_BTN = {"background": "transparent", "color": "#3fd0ff", "border": "1px solid #30363d",
+           "borderRadius": "8px", "padding": "6px 14px", "cursor": "pointer", "font": "inherit"}
+
 app = Dash(__name__, title="AlgoLab")
 app.layout = html.Div(style=PAGE, children=[
-    html.H2("AlgoLab"),
+    html.Div([html.H2("AlgoLab", style={"margin": "0", "flex": "1"}),
+              html.Button("Discovery", id="nav-discovery", n_clicks=0, style=NAV_BTN)],
+             style={"display": "flex", "alignItems": "center", "gap": "12px", "marginBottom": "12px"}),
     dcc.Interval(id="tick", interval=15_000),
     dcc.Tabs(id="tabs", value="overview", children=[
         dcc.Tab(label="Overview", value="overview"),
@@ -224,6 +282,7 @@ app.layout = html.Div(style=PAGE, children=[
         dcc.Tab(label="Trades", value="trades"),
         dcc.Tab(label="Framework", value="framework"),
         dcc.Tab(label="Agent", value="agent"),
+        dcc.Tab(label="Discovery", value="discovery"),
     ]),
     html.Div(id="tab-body", style={"marginTop": "12px"}),
     html.H3("Autotune (3D)"),
@@ -233,9 +292,16 @@ app.layout = html.Div(style=PAGE, children=[
 ])
 
 
+@app.callback(Output("tabs", "value"), Input("nav-discovery", "n_clicks"), prevent_initial_call=True)
+def open_discovery(_):
+    return "discovery"
+
+
 @app.callback(Output("tab-body", "children"), Input("tabs", "value"), Input("tick", "n_intervals"))
 def render_tab(tab: str, _):
     s = snapshot()
+    if tab == "discovery":
+        return discovery_panel(s)
     if tab == "signals":
         return signals_table(s)
     if tab == "health":
