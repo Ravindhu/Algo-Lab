@@ -20,8 +20,8 @@ Pipeline (one run): breeding (GA) -> optimizer (hill-climb) -> auto-tuner (adapt
 (validation, beat-random, Monte-Carlo, nudge, hold-out) -> top-N report.
 
 Public API for later live wiring:
-    from algolab.discovery.factory import signal_for_genome
-    sig = signal_for_genome(df, genome)      # int8 array; sig[-1] = signal on last CLOSED bar
+    from algolab.discovery_factory import sig_and_fill_for_genome
+    sig, fill = sig_and_fill_for_genome(df, genome)   # sig[-1] / fill[-1] = last CLOSED bar
 
 NOT financial advice. Backtests are estimates. Forward-test on demo first.
 """
@@ -61,9 +61,13 @@ np.seterr(all="ignore")
 # 1. BUILT-IN BACKTESTER
 # ======================================================================================
 @njit(cache=True)
-def run_bt(o, h, l, c, atr, sig, sl_m, tp_m, max_hold, cost):
+def run_bt(o, h, l, c, atr, sig, fill, sl_m, tp_m, max_hold, cost):
     """
-    Signal at close of bar i  ->  entry at OPEN of bar i+1 (no look-ahead).
+    Two fill models, chosen per signal bar by `fill` (NaN = not set):
+      * fill is NaN : signal at close of bar i -> entry at OPEN of bar i+1 (no look-ahead).
+                      Exits are checked from bar i+1.
+      * fill is set : a resting limit at that price, filled during bar i (the touch bar).
+                      Exits are checked from bar i, so the touch bar's range counts.
     One trade at a time. SL/TP in ATR multiples. If SL and TP both touched in the same
     bar, SL is assumed first (pessimistic). Result per trade is in R (risk multiples):
     R = (price move - cost) / stop distance.
@@ -84,7 +88,12 @@ def run_bt(o, h, l, c, atr, sig, sl_m, tp_m, max_hold, cost):
             p += 1
             continue
         s = sig[i]
-        entry = o[i + 1]
+        if np.isnan(fill[i]):
+            entry = o[i + 1]
+            start = i + 1
+        else:
+            entry = fill[i]
+            start = i
         sl_d = a * sl_m
         tp_d = a * tp_m
         if s == 1:
@@ -93,12 +102,12 @@ def run_bt(o, h, l, c, atr, sig, sl_m, tp_m, max_hold, cost):
         else:
             sl = entry + sl_d
             tp = entry - tp_d
-        last = i + 1 + max_hold
+        last = start + max_hold
         if last > n - 1:
             last = n - 1
         j_exit = last
         exit_p = c[last]
-        for j in range(i + 1, last + 1):
+        for j in range(start, last + 1):
             if s == 1:
                 hit_sl = l[j] <= sl
                 hit_tp = h[j] >= tp
@@ -364,16 +373,65 @@ def f_ema_cross(I, p):
     return _sig(_xup(a, b), _xdn(a, b), p["inv"])
 
 
-# OCL entry, ported 1:1 from Algo-Lab (algolab/signals/engulfing.py + framework
-# strategies/engulfing_strategy.py + hilega_milega.py). BUY = bullish engulfing AND
-# RSI above EMA(RSI); SELL = bearish engulfing AND RSI below EMA(RSI). RSI is the
-# simple-average RSI convention of hilega_milega.py (NOT the Wilder RSI of I.rsi).
-def f_ocl_hm(I, p):
-    eng = I.engulf()
+# Engulfing setup, mirrored from the LIVE rule in
+# algolab/framework/strategies/engulfing_strategy.py. Keep these equal to the live values:
+#   DEFAULT_MIN_BODY_PCT = 0.5, FIB_ENTRY = 0.886, Engulfing.max_wait default = 5.
+ENG_MIN_BODY_PCT = 0.5
+ENG_FIB = 0.886
+ENG_MAX_WAIT = 5
+
+
+def _engulf_pattern(I, p):
+    """+1 / -1 / 0 per bar: live engulfing() shape with the body filter, AND the Hilega-Milega
+    direction on that same bar (RSI above EMA(RSI) for BUY, below for SELL). inv flips it."""
+    o, h, l, c = I.o, I.h, I.l, I.c
+    rng = h - l
+    body = np.abs(c - o)
+    ratio = np.where(rng > 0, body / np.where(rng > 0, rng, 1.0), 0.0)
+    big = (ratio > ENG_MIN_BODY_PCT) & (_sh(ratio) > ENG_MIN_BODY_PCT)   # both candles
+    eng = np.where(big, I.engulf(), 0)
     conf = I.hm(p["rn"], p["ren"])
-    bull = (eng > 0) & (conf > 0)
-    bear = (eng < 0) & (conf < 0)
-    return _sig(bull, bear, p["inv"])
+    d = np.where((eng > 0) & (conf > 0), 1, np.where((eng < 0) & (conf < 0), -1, 0))
+    return -d if p["inv"] else d
+
+
+def _fib_fills(h, l, d, max_wait=ENG_MAX_WAIT, fib=ENG_FIB):
+    """Entry model of the live Engulfing strategy, bar by bar.
+
+    A pattern at bar j arms a level 88.6% of the way back into its candle (BUY: high - fib*range,
+    SELL: low + fib*range). The trade fires on the FIRST later bar k (k-j <= max_wait) whose range
+    reaches that level. An earlier touch voids the pattern. If several patterns touch on the same
+    bar, the newest one wins (the live code scans newest first).
+
+    Returns (sig, fill): sig[k] = side on the fill bar, fill[k] = the level (NaN elsewhere)."""
+    n = len(d)
+    rng = h - l
+    level = np.where(d > 0, h - fib * rng, np.where(d < 0, l + fib * rng, np.nan))
+    sig = np.zeros(n, np.int8)
+    fill = np.full(n, np.nan)
+    assigned = np.zeros(n, bool)   # fill bar k already has a trade
+    done = np.zeros(n, bool)       # pattern j was already touched (or voided)
+    for dd in range(1, max_wait + 1):   # dd = k - j, ascending = newest pattern first
+        j = np.arange(0, n - dd)
+        k = j + dd
+        lev = level[j]
+        dj = d[j]
+        valid = (dj != 0) & ~done[j]
+        touch = np.where(dj > 0, l[k] <= lev, h[k] >= lev)   # NaN level -> False
+        newly = valid & touch
+        done[j[newly]] = True
+        take = newly & ~assigned[k]
+        kk = k[take]
+        sig[kk] = dj[take]
+        fill[kk] = lev[take]
+        assigned[kk] = True
+    return sig, fill
+
+
+def f_ocl_hm(I, p):
+    """Engulfing setup with the live fib-touch entry. Returns (sig, fill)."""
+    d = _engulf_pattern(I, p)
+    return _fib_fills(I.h, I.l, d)
 
 
 def f_macd(I, p):
@@ -766,9 +824,12 @@ class Engine:
         self.risk = args.risk / 100.0
         self.cache, self.seen = {}, {}
 
-    def signal(self, g):
+    def sig_fill(self, g):
+        """(signal, fill) for a genome. fill is None for families that use next-open entries."""
         I = self.ind
-        s = FAMILIES[g["fam"]]["fn"](I, g["p"]).copy()
+        out = FAMILIES[g["fam"]]["fn"](I, g["p"])
+        s, fill = out if isinstance(out, tuple) else (out, None)
+        s = s.copy()
         if g["dir"] == 1:
             s[s < 0] = 0
         elif g["dir"] == -1:
@@ -778,14 +839,21 @@ class Engine:
             lm, sm = fl
             s[(s > 0) & ~lm] = 0
             s[(s < 0) & ~sm] = 0
-        return s
+        return s, fill
 
-    def trades(self, g, seg, sig=None):
+    def signal(self, g):
+        return self.sig_fill(g)[0]
+
+    def trades(self, g, seg, sig=None, fill=None):
+        """Trade R-multiples on one slice. Pass sig (and fill) to score a specific signal array,
+        e.g. the random baseline, which has no fill prices and so uses next-open entries."""
         if sig is None:
-            sig = self.signal(g)
+            sig, fill = self.sig_fill(g)
         a, b = self.seg[seg]
         I = self.ind
-        r, _ = run_bt(I.o[a:b], I.h[a:b], I.l[a:b], I.c[a:b], self.atr[a:b], sig[a:b],
+        if fill is None:
+            fill = np.full(len(sig), np.nan)
+        r, _ = run_bt(I.o[a:b], I.h[a:b], I.l[a:b], I.c[a:b], self.atr[a:b], sig[a:b], fill[a:b],
                       float(g["sl"]), float(g["tp"]), int(g["hold"]), self.cost)
         return r
 
@@ -953,9 +1021,9 @@ def run_gates(eng: Engine, finalists, args, rng):
     risk = eng.risk
     I = eng.ind
     for fit_train, g in finalists:
-        sig = eng.signal(g)
-        mt = metrics(eng.trades(g, "train", sig), risk)
-        r_val = eng.trades(g, "val", sig)
+        sig, fill = eng.sig_fill(g)
+        mt = metrics(eng.trades(g, "train", sig, fill), risk)
+        r_val = eng.trades(g, "val", sig, fill)
         mv = metrics(r_val, risk)
 
         # GATE 1: validation slice
@@ -982,7 +1050,7 @@ def run_gates(eng: Engine, finalists, args, rng):
         funnel["rand"] += 1
 
         # GATE 3: Monte-Carlo shuffle of trade order -> 95th percentile drawdown
-        r_dev = eng.trades(g, "dev", sig)
+        r_dev = eng.trades(g, "dev", sig, fill)
         idx = rng.random((1000, len(r_dev))).argsort(axis=1)
         eq = np.cumprod(1.0 + risk * r_dev[idx], axis=1)
         pk = np.maximum.accumulate(np.maximum(eq, 1.0), axis=1)
@@ -1005,7 +1073,7 @@ def run_gates(eng: Engine, finalists, args, rng):
         funnel["nudge"] += 1
 
         # GATE 5: final hold-out slice (never used in breeding or earlier gates)
-        mte = metrics(eng.trades(g, "test", sig), risk)
+        mte = metrics(eng.trades(g, "test", sig, fill), risk)
         if mte["n"] < args.min_test_trades or mte["exp"] <= 0 or mte["pf"] < 1.0:
             continue
         funnel["holdout"] += 1
@@ -1180,15 +1248,27 @@ def ledger_save(root, led):
     p.write_text(json.dumps(led, indent=1), encoding="utf-8")
 
 
-def signal_for_genome(df, genome):
+def sig_and_fill_for_genome(df, genome):
     """PUBLIC API for live use. df = recent CLOSED-bar OHLC (DatetimeIndex), >= ~300 bars.
-    Returns int8 array (+1 buy / -1 sell / 0 none). sig[-1] is the signal on the last closed bar;
-    the order would be placed at the next bar's open (same as the backtest)."""
-    class _S:  # minimal stand-in so we reuse Engine.signal without a full Engine
+    Returns (sig, fill):
+      sig  - int8 array (+1 buy / -1 sell / 0 none) for each bar.
+      fill - float array: the entry price for a bar whose sig is set, or NaN.
+             For fib-entry families (ocl_hm) the trade is a resting limit at fill[k], filled on
+             bar k. For other families the entry is the NEXT bar's open, and fill is NaN.
+    Only the last closed bar matters for live decisions: check sig[-1] and fill[-1]."""
+    class _S:  # minimal stand-in so we reuse Engine.sig_fill without a full Engine
         pass
     s = _S()
     s.ind = Ind(df)
-    return Engine.signal(s, genome)
+    sig, fill = Engine.sig_fill(s, genome)
+    if fill is None:
+        fill = np.full(len(sig), np.nan)
+    return sig, fill
+
+
+def signal_for_genome(df, genome):
+    """Signal array only (see sig_and_fill_for_genome for the fill prices)."""
+    return sig_and_fill_for_genome(df, genome)[0]
 
 
 # ======================================================================================
