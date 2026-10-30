@@ -61,8 +61,10 @@ np.seterr(all="ignore")
 # 1. BUILT-IN BACKTESTER
 # ======================================================================================
 @njit(cache=True)
-def run_bt(o, h, l, c, atr, sig, fill, sl_m, tp_m, max_hold, cost):
-    """
+def run_bt_loop(o, h, l, c, atr, sig, fill, sl_m, tp_m, max_hold, cost):
+    """Reference bar-by-bar trade loop. Kept as the oracle for run_bt_vec (see tests).
+    Under numba this is compiled; without numba it is plain Python and very slow.
+
     Two fill models, chosen per signal bar by `fill` (NaN = not set):
       * fill is NaN : signal at close of bar i -> entry at OPEN of bar i+1 (no look-ahead).
                       Exits are checked from bar i+1.
@@ -126,9 +128,82 @@ def run_bt(o, h, l, c, atr, sig, fill, sl_m, tp_m, max_hold, cost):
         out_r[k] = pnl / sl_d
         out_i[k] = j_exit
         k += 1
+        p += 1                                   # always move past this signal, even if it exits on its own bar
         while p < m and idx[p] < j_exit:
             p += 1
     return out_r[:k], out_i[:k]
+
+
+def run_bt_vec(o, h, l, c, atr, sig, fill, sl_m, tp_m, max_hold, cost, chunk=2048):
+    """Vectorized trade simulator. Same rules and same output as run_bt_loop, without a per-bar
+    Python loop.
+
+    Every signal's exit depends only on its own entry, so all exits are found at once with a
+    sliding window (first bar that touches SL or TP, SL first if both, else the last bar of the
+    hold). The one-trade-at-a-time rule is then a short greedy pass over the candidates, which
+    is the only sequential step left. Signals are processed in chunks to bound memory.
+    """
+    n = len(c)
+    sig = np.asarray(sig)
+    idx = np.nonzero(sig)[0]
+    idx = idx[idx < n - 2]                       # loop: "if i >= n - 2: break"
+    idx = idx[atr[idx] > 0.0]                    # loop: "if not a > 0: skip" (NaN fails too)
+    m = len(idx)
+    if m == 0:
+        return np.empty(0, np.float64), np.empty(0, np.int64)
+
+    sv = sig[idx].astype(np.float64)             # raw signal value, used in pnl as the loop does
+    long_ = sig[idx] == 1                        # loop: "if s == 1" picks the long branch
+    d = np.where(long_, 1.0, -1.0)
+    fl = fill[idx]
+    no_fill = np.isnan(fl)
+    start = np.where(no_fill, idx + 1, idx)      # next-open entry, or the touch bar
+    entry = np.where(no_fill, o[idx + 1], fl)
+    a = atr[idx]
+    sl_d = a * sl_m
+    tp_d = a * tp_m
+    sl = entry - d * sl_d
+    tp = entry + d * tp_d
+    last = np.minimum(start + max_hold, n - 1)
+
+    W = int(max_hold) + 1
+    L = np.concatenate([l, np.full(W, np.nan)])  # pad so the window never runs off the end
+    H = np.concatenate([h, np.full(W, np.nan)])
+    ar = np.arange(W)
+    j_exit = np.empty(m, np.int64)
+    exit_p = np.empty(m, np.float64)
+    for lo in range(0, m, chunk):
+        s_ = slice(lo, min(m, lo + chunk))
+        st, lst = start[s_], last[s_]
+        win = st[:, None] + ar[None, :]
+        valid = win <= lst[:, None]
+        lw, hw = L[win], H[win]
+        lg = long_[s_][:, None]
+        slc, tpc = sl[s_][:, None], tp[s_][:, None]
+        hit_sl = np.where(lg, lw <= slc, hw >= slc) & valid
+        hit_tp = np.where(lg, hw >= tpc, lw <= tpc) & valid
+        hit = hit_sl | hit_tp
+        any_hit = hit.any(axis=1)
+        first = hit.argmax(axis=1)
+        rows = np.arange(len(st))
+        ex = np.where(hit_sl[rows, first], sl[s_], tp[s_])   # SL wins a same-bar tie
+        j_exit[s_] = np.where(any_hit, st + first, lst)
+        exit_p[s_] = np.where(any_hit, ex, c[lst])
+
+    r_all = ((exit_p - entry) * sv - cost) / sl_d
+    keep = []
+    nxt = -1                                     # loop: skip signals with i < previous exit bar
+    for k in range(m):
+        if idx[k] < nxt:
+            continue
+        keep.append(k)
+        nxt = j_exit[k]
+    keep = np.asarray(keep, np.int64)
+    return r_all[keep], j_exit[keep]
+
+
+# Numba users keep the compiled loop. Everyone else gets the vectorized path. Both are tested equal.
+run_bt = run_bt_loop if HAVE_NUMBA else run_bt_vec
 
 
 def metrics(r, risk=0.01):
@@ -1328,7 +1403,7 @@ def main(argv=None):
     bank_path = state_dir / "discovery_gene_bank.json"
     bank = load_bank(bank_path)
     led = ledger_load(root)
-    results, skipped = [], []
+    results, skipped, funnels = [], [], []
 
     for d in datasets:
         lk = f"{d.key}|{d.window}"
@@ -1351,6 +1426,7 @@ def main(argv=None):
             led[lk] = dict(uses=used + 1, last=datetime.now(timezone.utc).isoformat())
             ledger_save(root, led)
         results += res
+        funnels.append(dict(dataset=d.key, **{k: int(v) for k, v in fn.items()}))
         elite = sorted(res, key=lambda x: -x["score"])[:30]
         bank.setdefault("elite", {})[d.key] = [x["genome"] for x in elite] or [g for _, g in fin[:20]]
         bank_path.write_text(json.dumps(bank, indent=1, default=_py), encoding="utf-8")
@@ -1392,7 +1468,7 @@ def main(argv=None):
     report = dict(generated_at=datetime.now(timezone.utc).isoformat(), applied=False,
                   note="REPORT ONLY. Review, then forward-test on demo. Sealed final data untouched.",
                   settings={k: v for k, v in vars(args).items() if k != "root"},
-                  skipped_datasets=skipped, candidates=final)
+                  skipped_datasets=skipped, funnel=funnels, candidates=final)
     jp = rep_dir / "discovery.json"
     jp.write_text(json.dumps(report, indent=1, default=_py), encoding="utf-8")
     if final:
