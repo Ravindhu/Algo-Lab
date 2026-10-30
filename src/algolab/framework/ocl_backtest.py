@@ -151,7 +151,7 @@ def run_ocl_backtest(strategy: OclKeylevel, htf: pd.DataFrame, ltf: pd.DataFrame
                            broker_sl=broker_sl, tp=tp, p=protection, pip=strategy.symbol.pip)
         meta = {"entry_time": times[i], "signal_time": pd.Timestamp(sig["time"]), "entry": fill,
                 "lots": lots, "rate": r, "sl": broker_sl, "tp": tp, "htf_sl": sig["htf_sl"],
-                "exit_mode": sig["exit_mode"], "retries": sig["retries"], "confirm_bar": sig["confirm_bar"],
+                "exit_mode": sig["exit_mode"], "retries": sig["retries"], "confirm_bar": sig.get("confirm_bar"),
                 "trail": None}
         strategy.on_entry()
 

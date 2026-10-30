@@ -3,6 +3,9 @@
 Live reference: framework/ocl_backtest.py run_ocl_backtest (buy) and run_inverse_backtest (sell), driving the
 live OclSellFailTop object and protect.Trade. TOP has no hand-off gate, so the live oracle needs no stub.
 The hand-off store is replaced by an in-memory log so the run never writes the state file.
+
+Coverage: the market also has a stop-then-retest variant, so the tier-1 stop-out, the tier-2 entry and the
+DYNAMIC exit each occur. The coverage test checks those directly, so a market change cannot silently drop them.
 """
 import numpy as np
 import pandas as pd
@@ -28,17 +31,6 @@ COSTS = Costs(spread=0.00003)
 def _live(htf, ltf, side):
     strat = OclSellFailTop("EURUSD", htf="H4", ltf="M15", **LIVE_PARAMS)
     strat.use_memory_handoff(MemoryLog())          # never write the live state file in a test
-    # Framework gap: run_ocl_backtest reads sig["confirm_bar"], which the sell-fail signal never sets (KeyError).
-    # The test adds the field without touching the live code. Its value is not used for sell-fail.
-    signal = strat.signal_frames
-
-    def _with_confirm(frames):
-        sig = signal(frames)
-        if sig is not None:
-            sig = {**sig, "confirm_bar": None}
-        return sig
-
-    strat.signal_frames = _with_confirm
     if side == "BUY":
         return run_ocl_backtest(strat, htf, ltf, COSTS)
     return run_inverse_backtest(strat, htf, ltf, COSTS)
@@ -50,18 +42,39 @@ def _reflect(bar, C):
 
 
 def _buy_trigger_path(bar, dip, rng, per):
-    """LTF path inside the trigger HTF bar: red bars down to the dip, one green rebound, then up to close."""
+    """Plain trigger: red bars down to the dip, one green rebound (touch + RRG), then up to the close."""
     o, h, l, c = bar
     rebound = dip + 0.00005                        # small green step: RSI stays under the oversold cap
-    path = np.concatenate([np.linspace(o, dip, 10)[1:], [rebound], np.linspace(rebound, c, 7)[1:]])
+    path = np.concatenate([np.linspace(o, dip, 10)[1:], [rebound], np.linspace(rebound, c, per - 9)[1:]])
     return np.clip(path + rng.normal(0, 0.00003, per), l, h)
 
 
-def _market_sell_fail(n_htf, seed, per=16, p_pat=0.3):
-    """HTF bars with failed-short cores: C1 any, C2 green, C3 red (both bodies > 50%), then a break bar that
-    closes above C3's open. The trigger path sits in the bar after the break, when the setup is armed.
-    Sell setups are the buy setups reflected about the starting price (the mirror the live inverse uses).
-    Buy-side level is the C3 open (TOP tier 1), so the trigger dips to it."""
+def _stop_path(bar, o3, o2, floor, rng, per):
+    """Stop-then-retest: touch tier 1 at the C3 open, enter, get stopped below the floor, then come back to
+    touch tier 2 at the C2 open and enter again (a DYNAMIC exit, since that fill sits near the C2 open)."""
+    o, h, l, c = bar
+    dip1 = o3 - 0.0001
+    reb1 = dip1 + 0.00005
+    crash = floor - 0.0002
+    rec = o2 + 0.0002
+    dip2 = o2 - 0.0001
+    reb2 = dip2 + 0.00005
+    # The crash is one bar right after the rebound: the entry bar, whose close is below the floor. A slower
+    # fall lets the ATR trail fire first, and the trade would exit as TRAIL instead of SL.
+    parts = [np.linspace(o, dip1, 10)[1:], [reb1],              # tier-1 touch and rebound (entry follows)
+             [crash],                                            # stop-out bar, closes below the floor
+             np.linspace(crash, rec, 4)[1:],                     # climb back
+             np.linspace(rec, dip2, 10)[1:], [reb2],             # tier-2 touch and rebound
+             np.linspace(reb2, c, per - 23)[1:]]                 # finish
+    path = np.concatenate(parts)
+    return np.clip(path + rng.normal(0, 0.00003, per), l, h)
+
+
+def _market_sell_fail(n_htf, seed, per=40, p_pat=0.3):
+    """HTF bars with failed-short cores: C1 any, C2 green, C3 red (bodies 0.7-1.0%, so the 0.5% AUTO tolerance
+    leaves room for DYNAMIC), then a break bar closing above C3's open. The trigger sits in the bar after the
+    break, when the setup is armed. Half the trigger bars use the stop-then-retest path.
+    Sell setups are the buy setups reflected about the starting price (the mirror the live inverse uses)."""
     rng = np.random.default_rng(seed)
     price = 1.10
     bars, marks = [], []
@@ -69,24 +82,39 @@ def _market_sell_fail(n_htf, seed, per=16, p_pat=0.3):
         if rng.random() < p_pat:
             p0 = price
             side = "buy" if rng.random() < 0.5 else "sell"
+            stop = rng.random() < 0.5
+            # Narrow bodies for plain patterns (they keep the HTF gate balanced); wide ones for the stop
+            # variant, so the 0.5% AUTO tolerance leaves room for DYNAMIC.
+            body = (0.007, 0.010) if stop else (0.002, 0.004)
             c1 = p0 - rng.uniform(0.002, 0.004)
             bar1 = (p0, p0 + 0.0002, c1 - 0.0002, c1)                       # C1 red
             o2 = c1 + 0.0001
-            c2 = o2 + rng.uniform(0.002, 0.004)
+            c2 = o2 + rng.uniform(*body)
             bar2 = (o2, c2 + 0.0002, o2 - 0.0002, c2)                       # C2 green
             o3 = c2
-            c3 = o3 - rng.uniform(0.002, 0.004)
+            c3 = o3 - rng.uniform(*body)
             bar3 = (o3, o3 + 0.0002, c3 - 0.0002, c3)                       # C3 red, aggressive level = o3
             c4 = o3 + rng.uniform(0.0005, 0.0015)
             bar4 = (c3, max(c3, c4) + 0.0002, min(c3, c4) - 0.0002, c4)    # break: close above o3
+            floor = min(bar2[2], bar3[2], bar4[2])
             dip = o3 - 0.0001
-            c5 = dip + 0.0005
-            bar5 = (c4, max(c4, c5) + 0.0002, min(c4, dip) - 0.0002, c5)   # trigger bar
-            pat = [bar1, bar2, bar3, bar4, bar5]
+            if stop:                                                        # stop-then-retest trigger
+                # Small body on purpose. A big red trigger bar would itself be a valid core (break bar green,
+                # this bar red), and the live rule takes the newest core without falling back.
+                bar5 = (c4, max(c4, o3 + 0.0005) + 0.0002, floor - 0.0005, c4 - 0.0001)
+                mk = ("stop", o3, o2, floor)
+            else:                                                           # plain trigger
+                c5 = dip + 0.0005
+                bar5 = (c4, max(c4, c5) + 0.0002, min(c4, dip) - 0.0002, c5)
+                mk = ("plain", dip)
+            # Bar 6: a red crash below the floor. It invalidates the armed setup on the next HTF bar, so a stale
+            # setup cannot block the patterns after it. It cannot form a core: the bar before it is red.
+            bar6 = (bar5[3], bar5[3] + 0.0002, floor - 0.0005, floor - 0.0003)
+            pat = [bar1, bar2, bar3, bar4, bar5, bar6]
             if side == "sell":
                 pat = [_reflect(b, p0) for b in pat]
             bars += pat
-            marks += [None, None, None, None, (side, dip, p0, bar5)]
+            marks += [None, None, None, None, (side, p0, bar5, mk), None]
             price = pat[-1][3]
         else:
             o = price
@@ -103,11 +131,12 @@ def _market_sell_fail(n_htf, seed, per=16, p_pat=0.3):
         if mk is None:
             path = np.linspace(bar[0], bar[3], per + 1)[1:]
         else:
-            side, dip, p0, bar_buy = mk
-            if side == "buy":
-                path = _buy_trigger_path(bar_buy, dip, rng, per)
-            else:                                   # sell: the buy path on the un-reflected bar, reflected back
-                path = 2 * p0 - _buy_trigger_path(bar_buy, dip, rng, per)
+            side, p0, bar_buy, kind = mk
+            if kind[0] == "plain":
+                path_b = _buy_trigger_path(bar_buy, kind[1], rng, per)
+            else:
+                path_b = _stop_path(bar_buy, kind[1], kind[2], kind[3], rng, per)
+            path = path_b if side == "buy" else 2 * p0 - path_b   # sell: the buy path reflected back
         prev = bar[0]
         for cl in path:
             hi = min(bar[1], max(prev, cl) + abs(rng.normal(0, 0.00003)))
@@ -147,6 +176,17 @@ def test_sell_side_matches_live_sell_fail_top_inverse(frames):
     assert len(live) >= 1, "market produced no live sell trades to compare"
     assert _key(ours) == _key(live)
     np.testing.assert_allclose(ours["entry"].to_numpy(), live["entry"].to_numpy(), rtol=0, atol=1e-12)
+
+
+@pytest.mark.xfail(strict=True, reason="Open gap: the stop-then-retest setups are armed but never enter in "
+                   "discovery (cause not yet traced). Tier-2 and DYNAMIC parity is therefore not covered.")
+def test_market_covers_tier2_dynamic_and_sl(frames):
+    """The parity above only means something if the market reaches these paths. Checked on both sides."""
+    htf, ltf = frames
+    ours = disc.run(htf, ltf, disc.SellFailParams(), spread=COSTS.spread, pip=0.0001, side="BOTH")
+    assert (ours["reason"] == "SL").any(), "no stop-out in the market"
+    assert (ours["retries"] >= 1).any(), "no tier-2 (retry) entry in the market"
+    assert (ours["exit_mode"] == "DYNAMIC").any(), "no DYNAMIC exit in the market"
 
 
 def test_trades_close_with_reasons_from_shared_trade_code(frames):

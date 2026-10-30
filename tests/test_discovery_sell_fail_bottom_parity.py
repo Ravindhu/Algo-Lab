@@ -40,17 +40,6 @@ def _live(htf, ltf, side):
     strat = OclSellFailBottom("EURUSD", htf="H4", ltf="M15", **LIVE_PARAMS)
     strat.use_memory_handoff(MemoryLog())          # never write the live state file in a test
     strat._handoff = _NoHandoff()                  # BOTTOM alone: no hand-off gate (see module docstring)
-    # Framework gap: run_ocl_backtest reads sig["confirm_bar"], which the sell-fail signal never sets (KeyError).
-    # The test adds the field without touching the live code. Its value is not used for sell-fail.
-    signal = strat.signal_frames
-
-    def _with_confirm(frames):
-        sig = signal(frames)
-        if sig is not None:
-            sig = {**sig, "confirm_bar": None}
-        return sig
-
-    strat.signal_frames = _with_confirm
     if side == "BUY":
         return run_ocl_backtest(strat, htf, ltf, COSTS)
     return run_inverse_backtest(strat, htf, ltf, COSTS)
