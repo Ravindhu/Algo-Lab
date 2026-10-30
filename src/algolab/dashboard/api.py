@@ -24,11 +24,13 @@ def _page(name: str) -> HTMLResponse:
 
 
 @app.get("/", response_class=HTMLResponse)
+@app.get("/live.html", response_class=HTMLResponse)
 def live_page():
     return _page("live.html")
 
 
 @app.get("/discovery", response_class=HTMLResponse)
+@app.get("/discovery.html", response_class=HTMLResponse)
 def discovery_page():
     return _page("discovery.html")
 

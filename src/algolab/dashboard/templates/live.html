@@ -42,6 +42,9 @@ th:first-child,td:first-child{text-align:left}
 .bar{height:4px;background:#0d1d2d;border-radius:3px;overflow:hidden;margin-top:3px}.bar i{display:block;height:100%;background:var(--cy)}
 .ringwrap{flex:1;min-height:0;display:grid;grid-template-columns:220px minmax(0,1fr) 380px}
 .side{padding:8px 10px;display:flex;flex-direction:column;gap:6px;min-height:0;overflow:hidden}
+#strats{gap:4px;overflow:auto}
+#strats .card{padding:3px 6px}
+#strats .card small{font-size:10px}
 .card{border:1px solid var(--ln);border-radius:3px;padding:5px 8px;background:#060e18}
 .card b{font-size:12px}.card small{display:block;color:var(--dim)}
 .row{display:flex;align-items:stretch;gap:4px}.ar{align-self:center;color:var(--dim)}
@@ -56,8 +59,8 @@ th:first-child,td:first-child{text-align:left}
  <span class="logo">ALGOLAB // FOREX</span>
  <span class="chip on">DRY_RUN</span><span class="chip warn">SIMULATED FEED</span>
  <span class="chip">3 accounts · 4 symbols · M5</span>
- <span class="chip on" id="kchip">KILL SWITCH OFF</span>
- <span class="sp"></span><a class="nav" href="/discovery">Discovery</a><button id="kbtn">STOP</button><span class="c" id="clk"></span>
+ <span class="chip on" id="kchip">KILL SWITCH OFF</span><span class="chip warn" id="apistate">API ?</span>
+ <span class="sp"></span><a class="nav" href="discovery.html">Discovery</a><button id="kbtn">STOP</button><span class="c" id="clk"></span>
 </div>
 <div class="grid">
  <section class="pn perf"><h3>Account P&amp;L and equity curve <span>all accounts combined · live</span></h3><div class="bd perfbd"><div>
@@ -91,7 +94,7 @@ let o=price;candles.push({o,h:o,l:o,c:o});
 const atr=()=>{const a=candles.slice(-14);return a.reduce((s,k)=>s+(k.h-k.l),0)/a.length||.0004};
 const lg=(m,cl)=>{const d=document.createElement('div');d.innerHTML=`<span class="d">${new Date().toLocaleTimeString('en-GB')}</span> ${m}`;if(cl)d.className=cl;$('log').prepend(d);while($('log').children.length>14)$('log').lastChild.remove()};
 const kill=(v,why)=>{killed=v;$('kchip').textContent=v?'KILL SWITCH ON':'KILL SWITCH OFF';$('kchip').className='chip '+(v?'bad':'on');$('kbtn').textContent=v?'START':'STOP';$('kbtn').className=v?'res':'';if(why)lg(why,'r')};
-async function toggleAlgo(){const want=killed?'start':'stop';try{const r=await fetch('/api/algo/'+want,{method:'POST'});const j=await r.json();kill(j.kill,j.kill?'Trading stopped from dashboard':null);lg('Algo '+want+' requested','a')}catch(e){lg('Start/stop failed: '+e,'r')}}
+async function toggleAlgo(){const want=killed?'start':'stop';try{const r=await fetch('api/algo/'+want,{method:'POST'});if(!r.ok)throw new Error('HTTP '+r.status);const j=await r.json();kill(j.kill,j.kill?'Trading stopped from dashboard':null);lg('Algo '+want+' done','a')}catch(e){lg('Start/stop failed ('+e.message+'). Open the dashboard at http://127.0.0.1:8050, not as a file.','r')}}
 $('kbtn').onclick=toggleAlgo;
 const wilson=(w,n)=>{if(!n)return 0;const z=1.64,p=w/n;return (p+z*z/(2*n)-z*Math.sqrt(p*(1-p)/n+z*z/(4*n*n)))/(1+z*z/n)};
 function signal(){
@@ -138,7 +141,7 @@ function ui(eq,dd){
  const dl=Math.max(0,-day/dayStart)/DAYLIM,age=a=>Math.round((Date.now()-a)/1000)+'s';
  $('gd').innerHTML=rw('Kill switch',killed?'ON':'OFF',killed?'r':'g')+rw('Validation','PASSED · 2d old','g')+rw('Account state',age(lastAcc)+' ago','g')+rw('Market data',age(lastData)+' ago','g')+rw('Daily loss used',(dl*100).toFixed(0)+'% of 2%',dl>.7?'r':'g')+rw('Drawdown used',(dd/DDLIM*100).toFixed(0)+'% of 6%',dd/DDLIM>.7?'r':'g')+rw('Distribution','pro-rata by equity','c')+rw('Mode','DRY_RUN = true','a');
  $('tb').innerHTML=trades.map(t=>`<tr><td>${t.t}</td><td style="color:${S[t.s].c}">${S[t.s].n}</td><td class="${t.side=='BUY'?'g':'r'}">${t.side}</td><td>${t.lots}</td><td>${t.entry.toFixed(5)}</td><td>${t.ex.toFixed(5)}</td><td class="${t.r>0?'g':'r'}">${t.r.toFixed(1)}</td><td class="${t.pnl>0?'g':'r'}">${fm(t.pnl)}</td></tr>`).join('')||'<tr><td colspan="8" class="d">Waiting for first fill…</td></tr>';
- $('strats').innerHTML=S.map((s,i)=>`<div class="card" style="border-color:${s.c}55"><b style="color:${s.c}">${s.n}</b><small>${s.t} trades · ${s.t?Math.round(s.w/s.t*100):0}% win</small><b class="${s.p>=0?'g':'r'}">${fm(s.p)}</b> <button data-i="${i}" class="${s.on?'res':''}" aria-label="Toggle ${s.n}">${s.on?'ON':'OFF'}</button></div>`).join('');
+ $('strats').innerHTML=S.map((s,i)=>({s,i})).sort((a,b)=>b.s.p-a.s.p).map(({s,i},r)=>`<div class="card" style="border-color:${s.c}55"><b style="color:${s.c}">#${r+1} ${s.n}</b><small>${s.t} trades · ${s.t?Math.round(s.w/s.t*100):0}% win</small><b class="${s.p>=0?'g':'r'}">${fm(s.p)}</b> <button data-i="${i}" class="${s.on?'res':''}" aria-label="Toggle ${s.n}">${s.on?'ON':'OFF'}</button></div>`).join('');
  if(tick%15==0){const m=rs.length;if(m<8)mcH='<div class="d">Need 8 closed trades. Now: '+m+'</div>';else{const fin=[];let ru=0;for(let k=0;k<500;k++){let e=1,p=1,h=0;for(let j=0;j<100;j++){e*=1+rs[Math.floor(Math.random()*m)]*RISK;p=Math.max(p,e);if((p-e)/p>DDLIM)h=1}fin.push(e-1);ru+=h}fin.sort((a,b)=>a-b);const w=wins/(wins+loss),kel=Math.max(0,w-(1-w)/RR)/2,ev=rs.reduce((a,b)=>a+b,0)/m;
   mcH=rw('Expected value per trade',ev.toFixed(2)+' R',ev>0?'g':'r')+rw('Worst 5% after 100 trades',(fin[25]*100).toFixed(1)+'%',fin[25]<0?'r':'g')+rw('Median after 100 trades',(fin[250]*100).toFixed(1)+'%',fin[250]>0?'g':'r')+rw('Best 5%',(fin[475]*100).toFixed(1)+'%','g')+rw('Chance of 6% drawdown',(ru/5).toFixed(0)+'%',ru/500>.3?'r':'g')+rw('Half-Kelly vs your risk',(kel*100).toFixed(1)+'% vs '+(RISK*100).toFixed(1)+'%',RISK>kel?'r':'g')+'<div class="d" style="margin-top:6px">Red means your risk is higher than the math supports.</div>'}}
  $('mc').innerHTML=mcH;
@@ -184,7 +187,7 @@ function draw(){
 $('strats').addEventListener('pointerdown',e=>{const i=e.target.dataset.i;if(i!=null){S[i].on=!S[i].on;lg(S[i].n+(S[i].on?' enabled':' disabled')+' (like select --apply)','a')}});
 setInterval(()=>{$('clk').textContent=new Date().toLocaleTimeString('en-GB')+' LOCAL'},1000);
 for(let i=0;i<30;i++){price+=rnd(-.0003,.0003);const k=candles[candles.length-1];k.c=price;k.h=Math.max(k.h,price);k.l=Math.min(k.l,price);if(i%4==3)candles.push({o:price,h:price,l:price,c:price})}
-async function pollAlgo(){try{const j=await (await fetch('/api/snapshot')).json();if(j.kill!==killed)kill(j.kill,null)}catch(e){}}
+async function pollAlgo(){try{const r=await fetch('api/snapshot');if(!r.ok)throw new Error('HTTP '+r.status);const j=await r.json();$('apistate').textContent='API OK';$('apistate').className='chip on';if(j.kill!==killed)kill(j.kill,null)}catch(e){$('apistate').textContent='API OFFLINE: open http://127.0.0.1:8050';$('apistate').className='chip bad'}}
 setInterval(pollAlgo,2000);pollAlgo();
 setInterval(step,700);step();draw();
 </script></body></html>
