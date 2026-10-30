@@ -1,4 +1,4 @@
-"""Parity tests: the discovery backtester's ocl_hm family must reproduce the LIVE engulfing rule.
+"""Parity tests: the discovery backtester's engulfing_ocl family must reproduce the LIVE engulfing rule.
 
 Discovery (src/algolab/discovery_factory.py) is report-only, but its results are only meaningful
 if the same bars give the same patterns, the same fib levels and the same entry bars as the live
@@ -41,7 +41,7 @@ def test_random_data_has_patterns(data):
 def test_pattern_direction_matches_live_rule(data):
     """Body filter (both candles > 50% of range) + HM direction on the pattern bar."""
     I = df_mod.Ind(data)
-    disc = df_mod._engulf_pattern(I, {"rn": 9, "ren": 3, "inv": 0})
+    disc = df_mod._engulf_pattern(I, {"rsi_period": 9, "ema_period": 3, "inv": 0})
 
     live_eng = engulfing(data, 0.5).to_numpy()
     live_hm = hm_direction(data["close"].to_numpy(), 9, 3)
@@ -55,7 +55,7 @@ def test_fib_entries_match_live_engulfing_signal(data):
     """For every closed bar k, the live Engulfing.signal (fed bars up to k) and the discovery
     fill model must agree on: whether a trade fires on bar k, its side, and its entry level."""
     I = df_mod.Ind(data)
-    sig, fill = df_mod.f_ocl_hm(I, {"rn": 9, "ren": 3, "inv": 0})
+    sig, fill = df_mod.f_engulfing_ocl(I, {"rsi_period": 9, "ema_period": 3, "inv": 0})
     live = Engulfing("EURUSD")
 
     checked, fired = 0, 0
@@ -79,10 +79,10 @@ def test_inverse_family_negates_the_pattern(data):
     """inv=1 flips the pattern direction (the mirrored setup). The fib level is then measured from
     the mirrored extreme, so inverse trades land on different bars, and we check the pattern itself."""
     I = df_mod.Ind(data)
-    d0 = df_mod._engulf_pattern(I, {"rn": 9, "ren": 3, "inv": 0})
-    d1 = df_mod._engulf_pattern(I, {"rn": 9, "ren": 3, "inv": 1})
+    d0 = df_mod._engulf_pattern(I, {"rsi_period": 9, "ema_period": 3, "inv": 0})
+    d1 = df_mod._engulf_pattern(I, {"rsi_period": 9, "ema_period": 3, "inv": 1})
     assert np.array_equal(d1, -d0)
-    sig1, _ = df_mod.f_ocl_hm(I, {"rn": 9, "ren": 3, "inv": 1})
+    sig1, _ = df_mod.f_engulfing_ocl(I, {"rsi_period": 9, "ema_period": 3, "inv": 1})
     assert np.count_nonzero(sig1) > 0
 
 

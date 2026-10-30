@@ -334,7 +334,7 @@ class Ind:
         return self._memo(("st", n, m), lambda: _supertrend(self.h, self.l, self.c, self.atr(n), float(m)))
 
     # ---- Hilega-Milega (exact port of algolab/hilega_milega.py: SIMPLE-average RSI) ----
-    def hm_rsi(self, n):
+    def hilega_milega_rsi(self, n):
         """Simple-average RSI, same convention as hilega_milega.hilega_milega_rsi."""
         def f():
             c = self.c
@@ -345,8 +345,8 @@ class Ind:
             return 100.0 - 100.0 / (1.0 + rs)
         return self._memo(("hmrsi", n), f)
 
-    def hm_line(self, rsi_n, e_n):
-        def f(): return _ema(self.hm_rsi(rsi_n), e_n)
+    def hilega_milega_line(self, rsi_n, e_n):
+        def f(): return _ema(self.hilega_milega_rsi(rsi_n), e_n)
         return self._memo(("hmline", rsi_n, e_n), f)
 
     def engulf(self):
@@ -357,10 +357,10 @@ class Ind:
             return np.where(bull, 1, np.where(bear, -1, 0))
         return self._memo(("engulf",), f)
 
-    def hm(self, rsi_n, e_n):
+    def hilega_milega(self, rsi_n, e_n):
         """Hilega-Milega direction: +1 RSI above EMA(RSI), -1 below, 0 unknown."""
         def f():
-            r, e = self.hm_rsi(rsi_n), self.hm_line(rsi_n, e_n)
+            r, e = self.hilega_milega_rsi(rsi_n), self.hilega_milega_line(rsi_n, e_n)
             return np.where(r > e, 1, np.where(r < e, -1, 0))
         return self._memo(("hm", rsi_n, e_n), f)
 
@@ -390,7 +390,7 @@ def _engulf_pattern(I, p):
     ratio = np.where(rng > 0, body / np.where(rng > 0, rng, 1.0), 0.0)
     big = (ratio > ENG_MIN_BODY_PCT) & (_sh(ratio) > ENG_MIN_BODY_PCT)   # both candles
     eng = np.where(big, I.engulf(), 0)
-    conf = I.hm(p["rn"], p["ren"])
+    conf = I.hilega_milega(p["rsi_period"], p["ema_period"])
     d = np.where((eng > 0) & (conf > 0), 1, np.where((eng < 0) & (conf < 0), -1, 0))
     return -d if p["inv"] else d
 
@@ -428,8 +428,8 @@ def _fib_fills(h, l, d, max_wait=ENG_MAX_WAIT, fib=ENG_FIB):
     return sig, fill
 
 
-def f_ocl_hm(I, p):
-    """Engulfing setup with the live fib-touch entry. Returns (sig, fill)."""
+def f_engulfing_ocl(I, p):
+    """Engulfing strategy (live engulfing_ocl) with the fib-touch entry. Returns (sig, fill)."""
     d = _engulf_pattern(I, p)
     return _fib_fills(I.h, I.l, d)
 
@@ -511,15 +511,6 @@ def f_zscore(I, p):
     return _sig(z < -p["z"], z > p["z"])
 
 
-def f_engulf(I, p):
-    o, c = I.o, I.c
-    po, pc = _sh(o), _sh(c)
-    big = np.abs(c - o) > p["minbody"] * I.atr(14)
-    bull = (pc < po) & (c > o) & (c >= po) & (o <= pc) & big
-    bear = (pc > po) & (c < o) & (c <= po) & (o >= pc) & big
-    return _sig(bull, bear, p["inv"])
-
-
 def f_consec(I, p):
     d = np.diff(I.c, prepend=I.c[0])
     dn = pd.Series((d < 0).astype(float)).rolling(p["n"]).sum().to_numpy() == p["n"]
@@ -547,7 +538,7 @@ def f_trend_pullback(I, p):
 
 INV = ("i", 0, 1)
 FAMILIES = {
-    "ocl_hm":         dict(fn=f_ocl_hm, space=dict(rn=("i", 5, 21), ren=("i", 2, 8), inv=INV)),
+    "engulfing_ocl":  dict(fn=f_engulfing_ocl, space=dict(rsi_period=("i", 5, 21), ema_period=("i", 2, 8), inv=INV)),
     "ema_cross":      dict(fn=f_ema_cross, space=dict(fast=("i", 3, 30), slow=("i", 20, 200), inv=INV)),
     "macd_cross":     dict(fn=f_macd, space=dict(fast=("i", 5, 20), slow=("i", 15, 50), sig=("i", 3, 15), inv=INV)),
     "rsi_reversion":  dict(fn=f_rsi_rev, space=dict(n=("i", 2, 21), lo=("i", 10, 35), hi=("i", 65, 90))),
@@ -563,7 +554,6 @@ FAMILIES = {
     "adx_di":         dict(fn=f_adx_di, space=dict(n=("i", 7, 30), thr=("i", 15, 35))),
     "ichimoku_tk":    dict(fn=f_ichimoku, space=dict(t=("i", 5, 15), k=("i", 20, 60), inv=INV)),
     "zscore_rev":     dict(fn=f_zscore, space=dict(n=("i", 10, 100), z=("f", 1.0, 3.0))),
-    "engulfing":      dict(fn=f_engulf, space=dict(minbody=("f", 0.2, 1.5), inv=INV)),
     "consecutive":    dict(fn=f_consec, space=dict(n=("i", 2, 7), inv=INV)),
     "squeeze":        dict(fn=f_squeeze, space=dict(n=("i", 15, 40), k=("f", 1.5, 2.5), km=("f", 1.0, 2.0))),
     "hour_breakout":  dict(fn=f_hour_break, space=dict(hour=("i", 0, 23), n=("i", 4, 40), inv=INV)),
@@ -643,8 +633,8 @@ def repair(g):
         p["slow"] = max(p["slow"], p["fast"] + 3)
     elif f == "ichimoku_tk":
         p["k"] = max(p["k"], p["t"] + 3)
-    elif f == "ocl_hm":
-        p["ren"] = max(p["ren"], 2)
+    elif f == "engulfing_ocl":
+        p["ema_period"] = max(p["ema_period"], 2)
     for k, spec in FAMILIES[f]["space"].items():
         p[k] = _clip(p[k], spec)
     # filters that were re-rolled (e.g. pinned-genome shortcut) get a fresh param dict
@@ -1253,7 +1243,7 @@ def sig_and_fill_for_genome(df, genome):
     Returns (sig, fill):
       sig  - int8 array (+1 buy / -1 sell / 0 none) for each bar.
       fill - float array: the entry price for a bar whose sig is set, or NaN.
-             For fib-entry families (ocl_hm) the trade is a resting limit at fill[k], filled on
+             For fib-entry families (engulfing_ocl) the trade is a resting limit at fill[k], filled on
              bar k. For other families the entry is the NEXT bar's open, and fill is NaN.
     Only the last closed bar matters for live decisions: check sig[-1] and fill[-1]."""
     class _S:  # minimal stand-in so we reuse Engine.sig_fill without a full Engine
@@ -1303,7 +1293,7 @@ def parse(argv=None, cfg=None):
     ap.add_argument("--seed", type=int, default=cfg["seed"])
     ap.add_argument("--force", action="store_true", help="ignore the hold-out use limit (NOT recommended)")
     ap.add_argument("--pin", default=None,
-                    help="pin the entry family (e.g. ocl_hm) - the GA then only evolves the filter, "
+                    help="pin the entry family (e.g. engulfing_ocl) - the GA then only evolves the filter, "
                          "exits and direction; filter weights stay fixed and every genome uses the pin")
     ap.add_argument("--demo", action="store_true", help="synthetic data, no CSV needed")
     a = ap.parse_args(argv)
