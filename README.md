@@ -59,7 +59,8 @@ Both live jobs run only after the same guards pass: kill switch, validation, fre
 - **Holdout discipline.** Each optimizer selection on the same holdout window is counted. After `max_holdout_uses`, the candidate is not applied until the sealed test is run.
 - **LLM token control.** A daily token budget, a cache per candidate, and compact payloads. When the budget is spent, the analyst skips trades. Usage is on the dashboard.
 - **Settings are bound to validation.** `validate` records a fingerprint of every setting that affects trading. A changed strategy, parameter, cost or enabled set makes the report stale, and trading stops until you validate again.
-- **Every enabled framework strategy must be replayed.** The replay runs the live code path on real M5/M15 data (never synthetic data). A strategy the replay cannot test fails the gate, so it cannot trade.
+- **Every enabled framework strategy must be replayed.** The replay runs the live code path on real data for every timeframe the strategy names in `config/framework.json` (`timeframe`, `htf`, `ltf`), never synthetic data. A strategy the replay cannot test fails the gate, so it cannot trade.
+- **Discovered candidates exit like their backtest.** A promoted candidate closes at the broker's stop or target, or after its fixed hold, counted in bars of its own timeframe, as the discovery backtest does. No trailing stop or breakeven is applied, because the backtest does not model them.
 - **Broker P&L only.** Closed trades are booked at the broker's realised profit (commission and swap included). Unknown P&L is recorded as unknown and excluded from the entry gate and from strategy selection. It is never estimated.
 - **Fills are recorded at once.** Each fill is tracked and journaled the moment it happens. A position the broker holds that nothing tracks blocks new entries and raises a CRITICAL alert.
 - **One cycle at a time.** A lock file stops overlapping runs from trading together. Traded signal keys persist, so a restart cannot trade the same bar twice.
@@ -70,7 +71,7 @@ Both live jobs run only after the same guards pass: kill switch, validation, fre
 
 ## What you need
 
-- Real history CSVs in `data/`: `{SYMBOL}_H4.csv` (legacy rule) and `{SYMBOL}_M5.csv` plus `{SYMBOL}_M15.csv` (framework replay). Export them with the Windows sync or from your broker. Without them, `validate` fails on purpose.
+- Real history CSVs in `data/`: `{SYMBOL}_H4.csv` (legacy rule), plus `{SYMBOL}_{TF}.csv` for every timeframe your enabled framework strategies use (for example `{SYMBOL}_M5.csv`, `{SYMBOL}_M15.csv`, and `{SYMBOL}_H4.csv` for `engulfing_ocl`). Export them with the Windows sync or from your broker. Without them, `validate` fails on purpose.
 - A Windows machine running MT5 and a **demo** account for the live adapter. Check the broker's filling modes and volume steps in the terminal first.
 - `config/symbols.json` (export with `scripts/export_symbols.py`), or the symbol list in `config/ops.json`.
 - Optional: Ollama for the LLM analyst, a Telegram token or webhook for alerts, and `ANTHROPIC_API_KEY` for the advisor.

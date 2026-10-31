@@ -3,8 +3,9 @@
 
     python -m algolab.framework.e2e --symbols EURUSD,USDJPY --bars 6000 --profile generic_2step_example
 
-Data: CSV files {SYMBOL}_M5.csv and {SYMBOL}_M15.csv in --data-dir (the scanner's format: time, open,
-high, low, close). With no files, a SYNTHETIC random walk is used. Synthetic results say nothing about
+Data: one CSV per symbol and timeframe, {SYMBOL}_{TF}.csv in --data-dir (the scanner's format: time, open,
+high, low, close). The timeframes are whatever the enabled strategies name in config/framework.json (htf, ltf,
+timeframe), so an H4 setup needs {SYMBOL}_H4.csv. With no files, a SYNTHETIC random walk is used. Synthetic results say nothing about
 edge; they only prove the wiring works. The report says which data was used.
 
 Writes state to a temporary directory (never the repo's state/), replaces alerts with a recorder, and
@@ -25,16 +26,36 @@ import pandas as pd
 from algolab.backtest.engine import load_csv
 from algolab.framework.prop import load_prop_config, select_profile
 from algolab.framework.replay import SimBroker, run_replay
+from algolab.framework.timeframe import TimeFrame, normalize_tf
 from algolab.ops import alerts, state as ops_state
 from algolab.profile import ROOT
 
 log = logging.getLogger("algolab.e2e")
 SPREADS = {"EURUSD": 0.00008, "GBPUSD": 0.00010, "USDJPY": 0.008, "EURJPY": 0.010}
 START = {"EURUSD": (1.10, 0.0004), "GBPUSD": (1.27, 0.0005), "USDJPY": (150.0, 0.06), "EURJPY": (165.0, 0.07)}
-KNOWN_REASONS = {"SL", "TRAIL", "TP", "DISASTER", "HTF", "PROP", "WEEKEND", "CLOSE", "EOD", "BROKER_CLOSE"}
+KNOWN_REASONS = {"SL", "TRAIL", "TP", "DISASTER", "HTF", "PROP", "WEEKEND", "CLOSE", "EOD", "BROKER_CLOSE", "TIME"}
+PANDAS_RULE = {"M5": "5min", "M15": "15min", "M30": "30min", "H1": "1h", "H4": "4h", "D1": "1D"}
+DEFAULT_TFS = ("M5", "M15")
 
 
-def synthetic(symbol: str, n: int, seed: int) -> dict[str, pd.DataFrame]:
+def required_timeframes(entries: list[dict], default_tf: str = "M5") -> list[str]:
+    """Every timeframe the given framework entries read, from their own config: params "timeframe", "htf" and
+    "ltf" (any spelling normalize_tf accepts). An entry that names none uses default_tf (the framework timeframe).
+    Returned finest first: the first name is the replay clock that every other timeframe is aligned to."""
+    tfs: set[str] = set()
+    for e in entries:
+        params = e.get("params", {})
+        named = [params[k] for k in ("timeframe", "htf", "ltf") if k in params]
+        for name in (named or [default_tf]):
+            tfs.add(normalize_tf(name))
+    return sorted(tfs, key=lambda t: TimeFrame(t).seconds)
+
+
+def tf_file(data_dir: Path, symbol: str, tf: str) -> Path:
+    return data_dir / f"{symbol}_{tf}.csv"
+
+
+def synthetic(symbol: str, n: int, seed: int, tfs: tuple[str, ...] = DEFAULT_TFS) -> dict[str, pd.DataFrame]:
     start, vol = START.get(symbol, (1.0, 0.0004))
     rng = np.random.default_rng(seed + sum(map(ord, symbol)))
     close = start + np.cumsum(rng.normal(0, vol, n))
@@ -43,34 +64,48 @@ def synthetic(symbol: str, n: int, seed: int) -> dict[str, pd.DataFrame]:
     low = np.minimum(open_, close) - rng.uniform(0, vol, n)
     idx = pd.date_range("2026-01-05 00:00", periods=n, freq="5min")
     m5 = pd.DataFrame({"open": open_, "high": high, "low": low, "close": close}, index=idx)
-    m15 = m5.resample("15min", label="left", closed="left").agg(
-        {"open": "first", "high": "max", "low": "min", "close": "last"}).dropna()
-    return {"M5": m5, "M15": m15}
+    out = {}
+    for tf in tfs:
+        if tf == "M5":
+            out[tf] = m5
+        elif tf in PANDAS_RULE:
+            out[tf] = m5.resample(PANDAS_RULE[tf], label="left", closed="left").agg(
+                {"open": "first", "high": "max", "low": "min", "close": "last"}).dropna()
+        else:
+            raise ValueError(f"synthetic data has no {tf}; use M5 or coarser")
+    return out
 
 
-def load_real(symbol: str, data_dir: Path) -> dict[str, pd.DataFrame]:
-    return {"M5": load_csv(data_dir / f"{symbol}_M5.csv"), "M15": load_csv(data_dir / f"{symbol}_M15.csv")}
+def load_real(symbol: str, data_dir: Path, tfs: tuple[str, ...] = DEFAULT_TFS) -> dict[str, pd.DataFrame]:
+    return {tf: load_csv(tf_file(data_dir, symbol, tf)) for tf in tfs}
 
 
 def build_data(symbols: list[str], bars: int, seed: int, data_dir: Path | None,
-               keep_fraction: float = 1.0) -> tuple[dict, pd.DatetimeIndex, str]:
-    """keep_fraction < 1 keeps only the first part of real history (validation excludes the sealed tail)."""
-    real = data_dir is not None and all(
-        (data_dir / f"{s}_M5.csv").exists() and (data_dir / f"{s}_M15.csv").exists() for s in symbols)
+               keep_fraction: float = 1.0, tfs: tuple[str, ...] = DEFAULT_TFS
+               ) -> tuple[dict, pd.DatetimeIndex, str]:
+    """tfs is finest first (see required_timeframes). keep_fraction < 1 keeps only the first part of real history
+    (validation excludes the sealed tail). Every timeframe is cut at the same last bar, so no replay step can read
+    a bar that opened after the clock."""
+    tfs = tuple(tfs)
+    clock = tfs[0]
+    real = data_dir is not None and all(tf_file(data_dir, s, tf).exists() for s in symbols for tf in tfs)
     if real:
-        per = {s: load_real(s, data_dir) for s in symbols}
-        index = per[symbols[0]]["M5"].index
+        per = {s: load_real(s, data_dir, tfs) for s in symbols}
+        index = per[symbols[0]][clock].index
         for s in symbols[1:]:
-            index = index.intersection(per[s]["M5"].index)
+            index = index.intersection(per[s][clock].index)
         index = index.sort_values()
         if keep_fraction < 1.0:
             index = index[: max(int(len(index) * keep_fraction), 1)]
+        end = index[-1]
         for s in symbols:
-            per[s]["M5"] = per[s]["M5"].loc[index]
+            for tf in tfs:
+                df = per[s][tf]
+                per[s][tf] = df.loc[index] if tf == clock else df[df.index <= end]
         source = f"CSV in {data_dir}"
     else:
-        per = {s: synthetic(s, bars, seed) for s in symbols}
-        index = per[symbols[0]]["M5"].index
+        per = {s: synthetic(s, bars, seed, tfs) for s in symbols}
+        index = per[symbols[0]][clock].index
         source = "SYNTHETIC random walk (not market data; proves wiring only)"
     return per, index, source
 
@@ -144,14 +179,15 @@ def run_e2e(symbols: list[str], bars: int = 3000, seed: int = 7, data_dir: Path 
         _, rules_obj = select_profile(pcfg)
         rules = rules_obj
 
-    per, index, source = build_data(symbols, bars, seed, data_dir, keep_fraction)
+    tfs = required_timeframes(cfg["strategies"], cfg.get("timeframe", "M5"))
+    per, index, source = build_data(symbols, bars, seed, data_dir, keep_fraction, tuple(tfs))
     tmp = Path(tempfile.mkdtemp(prefix="algolab-e2e-"))
     old_state_dir, old_send = ops_state.STATE_DIR, alerts.send
     recorded: list[str] = []
     try:
         ops_state.STATE_DIR = tmp / "state"
         alerts.send = lambda text, *a, **k: recorded.append(text) or True
-        sim = SimBroker(per, index, {s: SPREADS.get(s, 0.0002) for s in symbols}, balance)
+        sim = SimBroker(per, index, {s: SPREADS.get(s, 0.0002) for s in symbols}, balance, ltf=tfs[0])
         out = asyncio.run(run_replay(sim, symbols, cfg, pcfg if prop_enabled else None, warmup))
         checks = check_invariants(sim, out["curve"], rules, cfg)
     finally:
@@ -160,7 +196,7 @@ def run_e2e(symbols: list[str], bars: int = 3000, seed: int = 7, data_dir: Path 
     pnl = [t["pnl"] for t in sim.trades]
     report = {
         "data": source, "symbols": symbols, "bars": len(index), "seed": seed,
-        "strategy_types": list(strategy_types),
+        "strategy_types": list(strategy_types), "timeframes": tfs,
         "profile": pcfg.get("active_profile") if prop_enabled else None,
         "balance": {"start": sim.start_balance, "end": round(sim.balance, 2)},
         "orders": len(sim.orders), "trades": len(sim.trades),

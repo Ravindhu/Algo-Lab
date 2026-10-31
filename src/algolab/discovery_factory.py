@@ -701,7 +701,7 @@ def live_compatible(genome) -> tuple[bool, str]:
     if genome.get("fam") in FIB_FAMILIES:
         return False, f"entry family {genome.get('fam')} uses a resting fib limit (live places market orders only)"
     if int(genome.get("hold", -1)) != SLTP_HOLD:
-        return False, f"hold {genome.get('hold')} is not the fixed SL/TP cap ({SLTP_HOLD}); live has no time exit"
+        return False, f"hold {genome.get('hold')} is not the fixed SL/TP cap ({SLTP_HOLD}); live applies only that hold"
     if int(genome.get("dir", 0)) not in (-1, 0, 1):
         return False, "invalid direction"
     return True, "ok"

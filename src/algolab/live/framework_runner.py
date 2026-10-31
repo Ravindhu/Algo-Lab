@@ -166,8 +166,11 @@ def build_bot(ad, p: dict, symbols: list[str], equity: float, cfg: dict, account
         elif obj is not None and not isinstance(obj, MultiTimeframeStrategy):
             # Plain strategies (scalp, discovered): broker stop and target, tracked so the close is
             # classified, journaled, and no longer blocks entries as an unmanaged position.
+            # A discovered candidate carries its backtested hold, which becomes a time exit live.
+            hold = (getattr(obj, "genome", None) or {}).get("hold")
             tracked[str(rec["ticket"])] = positions.new_plain_record(
-                rec, strategy=rec["strategy"], tf=obj.timeframe.value)
+                rec, strategy=rec["strategy"], tf=obj.timeframe.value,
+                hold_bars=None if hold is None else int(hold))
         write_json(POSITIONS_STATE, tracked)
         journal.record_open(source="framework", strategy=rec["strategy"], symbol=rec["symbol"],
                             side=rec["side"], ticket=rec.get("ticket"), lots=rec["lots"],
