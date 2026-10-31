@@ -201,3 +201,17 @@ def test_promote_refuses_fib_candidate(tmp_path):
     root = _write_root(tmp_path, [_cand(_genome(fam="engulfing_ocl"))])
     with pytest.raises(dp.PromoteError, match="cannot run live"):
         dp.promote(root, 1)
+
+
+def test_bank_rows_status_and_order(tmp_path):
+    good, fib, other = _genome(), _genome(fam="engulfing_ocl"), _genome(fam="donchian")
+    root = _write_root(tmp_path, [_cand(good), _cand(fib), _cand(other, sym="GBPUSD")])
+    rows = dp.bank_rows(root)
+    assert [r["rank"] for r in rows] == [1, 2, 3]
+    assert rows[0]["status"] == "ready" and rows[0]["can_promote"]
+    assert rows[1]["status"].startswith("not live") and not rows[1]["can_promote"]
+    dp.promote(root, 1)
+    rows = dp.bank_rows(root)
+    assert rows[0]["status"] == "promoted (disabled)" and not rows[0]["can_promote"]
+    assert rows[2]["symbol"] == "GBPUSD"
+    assert dp.bank_rows(tmp_path / "nothing") == []

@@ -94,3 +94,36 @@ def promote(root: Path, rank: int) -> dict:
     tmp.write_text(json.dumps(fw, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, fw_path)
     return entry
+
+
+def bank_rows(root: Path) -> list[dict]:
+    """The candidate bank: every candidate from the last run, in rank order, with its live status.
+    Status is one of: "promoted (disabled)", "enabled", "ready", or "not live: <reason>".
+    Pure read: this never changes any file."""
+    root = Path(root)
+    try:
+        cands = list_candidates(root)
+    except PromoteError:
+        return []
+    try:
+        fw = _load_json(root / "config" / "framework.json")
+    except PromoteError:
+        fw = {"strategies": []}
+    entries = [e for e in fw.get("strategies", []) if e.get("type") == "discovered"]
+    rows = []
+    for i, c in enumerate(cands, 1):
+        genome = c.get("genome") or {}
+        test = c.get("test") or {}
+        ok, why = df_mod.live_compatible(genome)
+        match = next((e for e in entries if (e.get("params") or {}).get("genome") == genome), None)
+        if match is not None:
+            status = "enabled" if match.get("enabled", True) else "promoted (disabled)"
+        elif ok:
+            status = "ready"
+        else:
+            status = f"not live: {why}"
+        rows.append({"rank": i, "symbol": c.get("symbol"), "tf": c.get("tf"),
+                     "family": genome.get("fam"), "score": c.get("score"),
+                     "holdout_pf": test.get("pf"), "trades": c.get("trades"),
+                     "status": status, "can_promote": ok and match is None})
+    return rows

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
-from dash import Dash, Input, Output, State, dcc, html
+from dash import ALL, Dash, Input, Output, ctx, dcc, html, no_update
 
 from algolab.memory import store as memory
 from algolab.ops import journal
@@ -226,6 +226,32 @@ GATE_LABELS = [("min_pf", "Validation PF >="), ("min_beat_random", "Beat random 
                ("min_test_trades", "Min trades: hold-out")]
 
 
+def bank_section() -> list:
+    """Candidate bank: every candidate from the last run, in rank order, with a one-click Promote button."""
+    from algolab import discovery_promote as dp
+    rows = dp.bank_rows(ROOT)
+    if not rows:
+        return [html.H4("Candidate bank"), html.Div("No candidates to promote.", style={"opacity": 0.6})]
+    td = {"padding": "6px 10px"}
+    cols = ["rank", "symbol", "tf", "family", "score", "hold-out PF", "trades", "status", ""]
+    head = html.Tr([html.Th(c, style=TH) for c in cols])
+    body = []
+    for r in rows:
+        btn = html.Button("Promote", id={"type": "promote-row", "rank": r["rank"]}, n_clicks=0,
+                          disabled=not r["can_promote"], style=NAV_BTN)
+        body.append(html.Tr([
+            html.Td(str(r["rank"]), style=td), html.Td(r["symbol"] or "", style=td),
+            html.Td(r["tf"] or "", style=td), html.Td(r["family"] or "", style=td),
+            html.Td(_num(r["score"], 1), style=td), html.Td(_num(r["holdout_pf"]), style=td),
+            html.Td(str(r["trades"] if r["trades"] is not None else ""), style=td),
+            html.Td(r["status"], style=td), html.Td(btn, style=td),
+        ]))
+    return [html.H4("Candidate bank (one click adds a DISABLED entry)"),
+            html.Table([html.Thead(head), html.Tbody(body)], style={"width": "100%"}),
+            html.Div("Enabling stays manual: run algolab validate, then set enabled to true in framework.json.",
+                     style={"opacity": 0.6, "marginTop": "6px"})]
+
+
 def discovery_panel(s: dict) -> list:
     """Shows the last discovery run (reports/discovery.json, written by algolab.discovery_factory).
     Read-only. Gate values come from that run's saved settings, so nothing is hard-coded here."""
@@ -254,6 +280,7 @@ def discovery_panel(s: dict) -> list:
                           "MC DD95 %": _num(r.get("mc_dd95"), 1), "nudge": r.get("nudge"),
                           "rule": r.get("desc", "")})
     return [html.Div(cards, style={"display": "flex", "flexWrap": "wrap"}),
+            *bank_section(),
             html.H4("Gate funnel (genomes reaching each stage)"),
             _table(funnel_rows, ["dataset", "candidates", "val", "rand", "mc", "nudge", "holdout"]),
             html.H4("Gate rules (from the last run's settings)"),
@@ -284,42 +311,28 @@ app.layout = html.Div(style=PAGE, children=[
         dcc.Tab(label="Agent", value="agent"),
         dcc.Tab(label="Discovery", value="discovery"),
     ]),
+    html.Div(id="promote-status", style={"marginTop": "8px", "opacity": 0.85}),
     html.Div(id="tab-body", style={"marginTop": "12px"}),
     html.H3("Autotune (3D)"),
     dcc.Dropdown(id="metric", value="score", options=["score", "trades"], clearable=False,
                  style={"color": "#000", "width": "280px"}),
     dcc.Graph(id="opt-3d"),
-    html.H3("Promote a discovery candidate (adds a DISABLED entry)"),
-    html.Div([dcc.Dropdown(id="promote-rank", options=[], placeholder="pick a candidate",
-                           style={"color": "#000", "width": "520px"}),
-              html.Button("Promote", id="promote-btn", n_clicks=0, style=NAV_BTN)],
-             style={"display": "flex", "gap": "12px", "alignItems": "center"}),
-    html.Div(id="promote-status", style={"marginTop": "8px", "opacity": 0.85}),
 ])
 
 
-@app.callback(Output("promote-rank", "options"), Input("tick", "n_intervals"))
-def promote_options(_):
+@app.callback(Output("promote-status", "children"),
+              Input({"type": "promote-row", "rank": ALL}, "n_clicks"), prevent_initial_call=True)
+def promote_row(_clicks):
+    """One click on a candidate row adds it to framework.json as a DISABLED entry. Never enables it."""
     from algolab import discovery_promote as dp
-    try:
-        cands = dp.list_candidates(ROOT)
-    except dp.PromoteError:
-        return []
-    return [{"label": f"{i}. {c['symbol']} {c['tf']} {c['genome']['fam']} (score {c['score']})", "value": i}
-            for i, c in enumerate(cands, 1)]
-
-
-@app.callback(Output("promote-status", "children"), Input("promote-btn", "n_clicks"),
-              State("promote-rank", "value"), prevent_initial_call=True)
-def promote_click(_, rank):
-    from algolab import discovery_promote as dp
-    if not rank:
-        return "Pick a candidate first."
+    if not ctx.triggered or not ctx.triggered[0].get("value"):
+        return no_update                        # a re-render of the table, not a click
+    rank = ctx.triggered_id["rank"]
     try:
         dp.promote(ROOT, int(rank))
     except dp.PromoteError as e:
-        return f"Refused: {e}"
-    return (f"Candidate {rank} added to framework.json as DISABLED. Run `algolab validate`, "
+        return f"Candidate {rank} refused: {e}"
+    return (f"Candidate {rank} added to framework.json as DISABLED. Run algolab validate, "
             "then enable it by hand.")
 
 
