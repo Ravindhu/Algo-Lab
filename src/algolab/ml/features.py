@@ -4,8 +4,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from algolab.backtest.engine import atr
-
 FEATURES = ["rsi", "rsi_slope", "atr_pct", "ema_gap", "body_ratio", "range_pct",
             "ret5", "ret20", "hour", "dow"]
 
@@ -19,6 +17,10 @@ def rsi(close: pd.Series, n: int = 14) -> pd.Series:
 
 
 def build(df: pd.DataFrame, rsi_n: int = 14, atr_n: int = 14) -> pd.DataFrame:
+    # Imported here, not at module top: backtest.engine -> framework -> strategies.scalp
+    # -> ml.features would otherwise re-enter backtest.engine while it is still loading.
+    from algolab.backtest.engine import atr
+
     c = df["close"]
     r = rsi(c, rsi_n)
     body = (df["close"] - df["open"]).abs()
