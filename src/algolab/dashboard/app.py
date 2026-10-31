@@ -1,5 +1,5 @@
-"""Dashboard. It reads state/ and reports/ and never talks to the broker or places orders. The one write is the
-Promote button, which needs DASH_ALLOW_WRITES=true.
+"""Dashboard. It reads state/ and reports/ and never talks to the broker or places orders. The writes are the
+Promote button and the Trade Setup popup (HTF, LTF, risk, symbols into config/). Both need DASH_ALLOW_WRITES=true.
 
 Run:  algolab dashboard        (then open http://127.0.0.1:8050)
 Env:  DASH_PASSWORD (required: every request needs it), DASH_HOST (default 127.0.0.1), DASH_PORT (default 8050),
@@ -13,10 +13,11 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
-from dash import ALL, Dash, Input, Output, ctx, dcc, html, no_update
+from dash import ALL, Dash, Input, Output, State, ctx, dcc, html, no_update
 from flask import Response, request
 
 from algolab.dashboard import security
+from algolab.dashboard import trade_setup as ts
 
 from algolab.memory import store as memory
 from algolab.ops import journal
@@ -300,6 +301,68 @@ def discovery_panel(s: dict) -> list:
 NAV_BTN = {"background": "transparent", "color": "#3fd0ff", "border": "1px solid #30363d",
            "borderRadius": "8px", "padding": "6px 14px", "cursor": "pointer", "font": "inherit"}
 
+PILL = {"fontSize": "12px", "padding": "4px 10px", "borderRadius": "999px", "background": "#161b22",
+        "border": "1px solid #30363d", "color": "#e6edf3"}
+LABEL = {"fontSize": "12px", "opacity": 0.7, "margin": "12px 0 4px"}
+INPUT = {"background": "#0d1117", "color": "#e6edf3", "border": "1px solid #30363d", "borderRadius": "8px",
+         "padding": "8px 10px", "width": "100%", "boxSizing": "border-box"}
+SAVE_BTN = {**NAV_BTN, "background": "#1f6feb", "color": "#ffffff", "border": "0"}
+X_BTN = {"background": "none", "border": "0", "color": "#8b98a5", "cursor": "pointer", "padding": "0 2px"}
+MODAL_BASE = {"position": "fixed", "inset": "0", "background": "rgba(0,0,0,.6)", "zIndex": 50,
+              "alignItems": "center", "justifyContent": "center", "padding": "12px"}
+MODAL_SHOW = {**MODAL_BASE, "display": "flex"}
+MODAL_HIDE = {**MODAL_BASE, "display": "none"}
+
+
+def _setup_or_none() -> dict | None:
+    """The current trade setup, or None when a config file cannot be read (the header says so)."""
+    try:
+        return ts.read_setup()
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def setup_chips(s: dict | None) -> list:
+    if not s:
+        return [html.Span("setup unreadable", style={**PILL, "borderColor": "#f59e0b", "color": "#f59e0b"})]
+    return [html.Span(t, style=PILL) for t in (f"HTF {s['htf']}", f"LTF {s['ltf']}",
+                                               f"Risk {s['risk_pct']}%", f"{len(s['symbols'])} symbols")]
+
+
+def trade_setup_modal() -> html.Div:
+    """Trade setup popup: HTF, LTF, risk and symbols only. Saved values go to config/ on Save."""
+    return html.Div(id="setup-modal", style=MODAL_HIDE, children=[
+        html.Div(style={"width": "100%", "maxWidth": "520px", "maxHeight": "92vh", "overflow": "auto",
+                        "background": "#161b22", "border": "1px solid #30363d", "borderRadius": "14px",
+                        "padding": "16px", "color": "#e6edf3"}, children=[
+            html.Div([html.H3("Trade Setup", style={"margin": "0", "flex": "1"}),
+                      html.Button("×", id="setup-x", n_clicks=0, style=X_BTN)],
+                     style={"display": "flex", "alignItems": "center"}),
+            html.Div("HTF (signal timeframe)", style=LABEL),
+            dcc.RadioItems(id="setup-htf", options=list(ts.HTF_CHOICES), inline=True,
+                           inputStyle={"marginRight": "4px", "marginLeft": "12px"}),
+            html.Div("LTF (entry timeframe)", style=LABEL),
+            dcc.RadioItems(id="setup-ltf", options=list(ts.LTF_CHOICES), inline=True,
+                           inputStyle={"marginRight": "4px", "marginLeft": "12px"}),
+            html.Div(f"Risk per trade, % of equity (max as set by the daily loss limit, up to "
+                     f"{ts.RISK_ABS_MAX_PCT}%)", style=LABEL),
+            dcc.Input(id="setup-risk", type="number", min=ts.RISK_MIN_PCT, max=ts.RISK_ABS_MAX_PCT,
+                      step=0.1, style=INPUT),
+            html.Div("Symbols", style=LABEL),
+            html.Div([dcc.Input(id="setup-sym-input", type="text", placeholder="e.g. EURUSD",
+                                style={**INPUT, "flex": "1"}),
+                      html.Button("Add", id="setup-sym-add", n_clicks=0, style=NAV_BTN)],
+                     style={"display": "flex", "gap": "8px"}),
+            html.Div(id="setup-sym-error", style={"color": "#ef4444", "fontSize": "12px", "minHeight": "14px"}),
+            html.Div(id="setup-sym-list", style={"display": "flex", "flexWrap": "wrap", "gap": "6px"}),
+            dcc.Store(id="setup-symbols", data=[]),
+            html.Div(id="setup-status", style={"marginTop": "12px", "fontSize": "13px"}),
+            html.Div([html.Button("Cancel", id="setup-cancel", n_clicks=0, style=NAV_BTN),
+                      html.Button("Save", id="setup-save", n_clicks=0, style=SAVE_BTN)],
+                     style={"display": "flex", "justifyContent": "flex-end", "gap": "8px", "marginTop": "14px"}),
+        ])])
+
+
 app = Dash(__name__, title="AlgoLab")
 
 
@@ -314,9 +377,12 @@ def require_login():
 
 
 app.layout = html.Div(style=PAGE, children=[
-    html.Div([html.H2("AlgoLab", style={"margin": "0", "flex": "1"}),
+    html.Div([html.H2("AlgoLab", style={"margin": "0"}),
+              html.Div(id="setup-chips", style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "flex": "1"}),
+              html.Button("Trade Setup", id="nav-setup", n_clicks=0, style=NAV_BTN),
               html.Button("Discovery", id="nav-discovery", n_clicks=0, style=NAV_BTN)],
              style={"display": "flex", "alignItems": "center", "gap": "12px", "marginBottom": "12px"}),
+    trade_setup_modal(),
     dcc.Interval(id="tick", interval=15_000),
     dcc.Tabs(id="tabs", value="overview", children=[
         dcc.Tab(label="Overview", value="overview"),
@@ -335,6 +401,78 @@ app.layout = html.Div(style=PAGE, children=[
                  style={"color": "#000", "width": "280px"}),
     dcc.Graph(id="opt-3d"),
 ])
+
+
+@app.callback(Output("setup-modal", "style"), Output("setup-htf", "value"), Output("setup-ltf", "value"),
+              Output("setup-risk", "value"), Output("setup-symbols", "data"),
+              Output("setup-status", "children", allow_duplicate=True),
+              Output("setup-sym-error", "children", allow_duplicate=True),
+              Input("nav-setup", "n_clicks"), Input("setup-x", "n_clicks"), Input("setup-cancel", "n_clicks"),
+              prevent_initial_call=True)
+def open_setup(_open, _x, _cancel):
+    """Opens the popup filled from config/, or closes it. Opening never writes anything."""
+    if ctx.triggered_id != "nav-setup":
+        return MODAL_HIDE, no_update, no_update, no_update, no_update, "", ""
+    s = _setup_or_none()
+    if s is None:
+        return MODAL_SHOW, no_update, no_update, no_update, [], "Could not read config/ files.", ""
+    return MODAL_SHOW, s["htf"], s["ltf"], s["risk_pct"], s["symbols"], "", ""
+
+
+@app.callback(Output("setup-symbols", "data", allow_duplicate=True),
+              Output("setup-sym-input", "value"),
+              Output("setup-sym-error", "children", allow_duplicate=True),
+              Input("setup-sym-add", "n_clicks"),
+              Input({"type": "setup-sym-remove", "sym": ALL}, "n_clicks"),
+              State("setup-sym-input", "value"), State("setup-symbols", "data"),
+              prevent_initial_call=True)
+def edit_symbols(_add, _remove, raw, syms):
+    """Adds the typed symbol or removes a chip. Nothing is written to disk here; Save does that."""
+    syms = list(syms or [])
+    tid = ctx.triggered_id
+    if isinstance(tid, dict) and tid.get("type") == "setup-sym-remove":
+        if not ctx.triggered[0].get("value"):      # chips re-rendering, not a click
+            return no_update, no_update, no_update
+        return [x for x in syms if x != tid["sym"]], no_update, ""
+    if tid == "setup-sym-add":
+        out, err = ts.add_symbol(syms, raw or "")
+        if err:
+            return no_update, no_update, err
+        return out, "", ""
+    return no_update, no_update, no_update
+
+
+@app.callback(Output("setup-sym-list", "children"), Input("setup-symbols", "data"))
+def render_setup_symbols(syms):
+    if not syms:
+        return html.Span("No symbols yet", style={"opacity": 0.6, "fontSize": "13px"})
+    return [html.Span([s, html.Button("×", id={"type": "setup-sym-remove", "sym": s}, n_clicks=0,
+                                      style=X_BTN)],
+                      style={**PILL, "display": "inline-flex", "alignItems": "center", "gap": "6px"})
+            for s in syms]
+
+
+@app.callback(Output("setup-status", "children"),
+              Input("setup-save", "n_clicks"),
+              State("setup-htf", "value"), State("setup-ltf", "value"),
+              State("setup-risk", "value"), State("setup-symbols", "data"),
+              prevent_initial_call=True)
+def save_setup_click(_n, htf, ltf, risk, syms):
+    """Writes the four config files. Refused unless DASH_ALLOW_WRITES=true."""
+    try:
+        res = ts.save_setup({"htf": htf, "ltf": ltf, "risk_pct": risk, "symbols": syms or []},
+                            allow_writes=security.writes_enabled())
+    except ts.SetupError as e:
+        return f"Not saved: {e}"
+    msg = f"Saved: {', '.join(res['written'])}."
+    if res["needs_validate"]:
+        msg += " HTF, LTF or risk changed, so the last validation is stale. Run algolab validate before trading resumes."
+    return msg
+
+
+@app.callback(Output("setup-chips", "children"), Input("tick", "n_intervals"))
+def render_setup_chips(_):
+    return setup_chips(_setup_or_none())
 
 
 @app.callback(Output("promote-status", "children"),
