@@ -38,19 +38,23 @@ def load_symbols(ops: dict) -> list[str]:
 
 
 def guard(acct: AccountState, ops: dict) -> tuple[bool, str]:
+    """May NEW entries be placed this cycle? Returns (False, reason) to block entries.
+
+    This never stops position management: framework_cycle always runs managed exits (see run_framework).
+    The drawdown and daily-loss baseline is updated first, so the peak and the day's start keep advancing
+    even while validation or the kill switch is blocking trades."""
+    ok_r, why_r, breach = check_limits(adjusted_equity(acct.equity, acct.net_deposits), ops["risk"])
     if kill_switch_on():
         return False, "kill switch active"
-    ok_v, why_v = validation_gate()          # no trading on unvalidated parameters
-    if not ok_v:
-        return False, why_v
-    if acct.open_positions is None:
-        return False, "open positions unknown (MT5 terminal did not answer) - failing closed"
-
-    ok_r, why_r, breach = check_limits(adjusted_equity(acct.equity, acct.net_deposits), ops["risk"])
     if breach:
         engage_kill(why_r)
         alerts.send("KILL SWITCH engaged: " + why_r, "CRITICAL")
         return False, why_r
+    ok_v, why_v = validation_gate()          # no new entries on unvalidated parameters
+    if not ok_v:
+        return False, why_v
+    if acct.open_positions is None:
+        return False, "open positions unknown (MT5 terminal did not answer) - failing closed"
     if not ok_r:
         return False, why_r
     if acct.open_positions >= LIVE["max_open_trades"]:
@@ -59,7 +63,9 @@ def guard(acct: AccountState, ops: dict) -> tuple[bool, str]:
 
 
 async def framework_cycle() -> dict:
-    """Framework strategies on their own schedule (every 5 minutes), with the guards first."""
+    """Framework cycle (every 5 minutes). Open positions are always managed. The guard only decides whether
+    new entries may be placed, so a halt never leaves managed exits (trailing stops, close-based stops, prop
+    flatten) switched off."""
     p = load_profile()
     ops = ops_config()
     symbols = load_symbols(ops)
@@ -74,10 +80,8 @@ async def framework_cycle() -> dict:
         ok, reason = guard(acct, ops)
         report.update(may_trade=ok, reason=reason, equity=acct.equity)
         if not ok:
-            write_json("framework_last_cycle.json", report)
-            log.warning("framework halted: %s", reason)
-            return report
-        fw = await run_framework(ad, p, symbols, acct.equity)
+            log.warning("new entries blocked: %s (open positions are still managed)", reason)
+        fw = await run_framework(ad, p, symbols, acct.equity, allow_entries=ok, entry_block_reason=reason)
         if fw is not None:
             report["framework"] = fw
     write_json("framework_last_cycle.json", report)

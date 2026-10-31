@@ -1,7 +1,9 @@
-"""Dashboard. Read-only: it reads state/ and reports/ and never talks to the broker or places orders.
+"""Dashboard. It reads state/ and reports/ and never talks to the broker or places orders. The one write is the
+Promote button, which needs DASH_ALLOW_WRITES=true.
 
 Run:  algolab dashboard        (then open http://127.0.0.1:8050)
-Env:  DASH_HOST (default 127.0.0.1), DASH_PORT (default 8050)"""
+Env:  DASH_PASSWORD (required: every request needs it), DASH_HOST (default 127.0.0.1), DASH_PORT (default 8050),
+      DASH_ALLOW_WRITES (default false)"""
 from __future__ import annotations
 
 import glob
@@ -12,6 +14,9 @@ from pathlib import Path
 import pandas as pd
 import plotly.graph_objects as go
 from dash import ALL, Dash, Input, Output, ctx, dcc, html, no_update
+from flask import Response, request
+
+from algolab.dashboard import security
 
 from algolab.memory import store as memory
 from algolab.ops import journal
@@ -296,6 +301,18 @@ NAV_BTN = {"background": "transparent", "color": "#3fd0ff", "border": "1px solid
            "borderRadius": "8px", "padding": "6px 14px", "cursor": "pointer", "font": "inherit"}
 
 app = Dash(__name__, title="AlgoLab")
+
+
+@app.server.before_request
+def require_login():
+    """Every request, including the Dash callbacks, needs the dashboard password."""
+    if not security.configured_password():
+        return Response("dashboard locked: set DASH_PASSWORD", 503)
+    if not security.is_authorized(request.headers.get("Authorization")):
+        return Response("login required", 401, {"WWW-Authenticate": security.REALM})
+    return None
+
+
 app.layout = html.Div(style=PAGE, children=[
     html.Div([html.H2("AlgoLab", style={"margin": "0", "flex": "1"}),
               html.Button("Discovery", id="nav-discovery", n_clicks=0, style=NAV_BTN)],
@@ -323,10 +340,13 @@ app.layout = html.Div(style=PAGE, children=[
 @app.callback(Output("promote-status", "children"),
               Input({"type": "promote-row", "rank": ALL}, "n_clicks"), prevent_initial_call=True)
 def promote_row(_clicks):
-    """One click on a candidate row adds it to framework.json as a DISABLED entry. Never enables it."""
+    """One click on a candidate row adds it to framework.json as a DISABLED entry. Never enables it.
+    Disabled unless DASH_ALLOW_WRITES=true."""
     from algolab import discovery_promote as dp
     if not ctx.triggered or not ctx.triggered[0].get("value"):
         return no_update                        # a re-render of the table, not a click
+    if not security.writes_enabled():
+        return "Promote is disabled. Set DASH_ALLOW_WRITES=true to allow it."
     rank = ctx.triggered_id["rank"]
     try:
         dp.promote(ROOT, int(rank))
@@ -367,6 +387,7 @@ def render_opt(metric: str, _):
 
 
 def main() -> None:
+    security.require_password_for_start()   # refuse to start unlocked, even on localhost
     app.run(host=os.getenv("DASH_HOST", "127.0.0.1"), port=int(os.getenv("DASH_PORT", "8050")))
 
 

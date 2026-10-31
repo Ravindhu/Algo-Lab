@@ -82,7 +82,7 @@ class FakeAdapter:
 
 CFG = {"timeframe": "M5", "max_open": 3, "magic": 20262002, "deviation_points": 20,
        "risk_per_trade": 0.005, "max_lots": 0.5, "max_spread_atr": 0.25, "enabled": True,
-       "strategies": [{"type": "ocl", "params": {"hm_enabled": False, "ltf_pattern_enabled": False}}]}
+       "strategies": [{"type": "ocl", "enabled": True, "params": {"hm_enabled": False, "ltf_pattern_enabled": False}}]}
 PROTECT = {"atr_trail_enabled": True, "atr_multiplier": 2.0, "breakeven_rr": 1.5, "round_trip_cost_pct": 0.2}
 
 

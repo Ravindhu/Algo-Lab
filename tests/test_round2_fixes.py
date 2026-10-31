@@ -399,7 +399,7 @@ def test_fingerprint_changes_when_an_enabled_strategy_changes(tmp_path, monkeypa
 
 def test_framework_replay_refuses_an_enabled_strategy_it_cannot_test(tmp_path, monkeypatch):
     from algolab.backtest import validate as V
-    fw = {"enabled": True, "strategies": [{"type": "engulfing", "params": {}}]}
+    fw = {"enabled": True, "strategies": [{"type": "engulfing", "enabled": True, "params": {}}]}
     path = tmp_path / "framework.json"
     path.write_text(json.dumps(fw))
     monkeypatch.setattr(V, "FRAMEWORK_CONFIG", path)
@@ -409,7 +409,7 @@ def test_framework_replay_refuses_an_enabled_strategy_it_cannot_test(tmp_path, m
 
 def test_framework_replay_refuses_missing_real_data(tmp_path, monkeypatch):
     from algolab.backtest import validate as V
-    fw = {"enabled": True, "strategies": [{"type": "ocl", "params": {}}]}
+    fw = {"enabled": True, "strategies": [{"type": "ocl", "enabled": True, "params": {}}]}
     path = tmp_path / "framework.json"
     path.write_text(json.dumps(fw))
     monkeypatch.setattr(V, "FRAMEWORK_CONFIG", path)
@@ -659,7 +659,7 @@ def _write_csvs(folder, symbols, bars=900, seed=3):
 def test_framework_replay_runs_on_real_csv_files_and_reports_trades(tmp_path, monkeypatch):
     from algolab.backtest import validate as V
     _write_csvs(tmp_path / "data", ["EURUSD"])
-    fw = {"enabled": True, "strategies": [{"type": "scalp", "params": {"ema_fast": 8, "ema_slow": 21,
+    fw = {"enabled": True, "strategies": [{"type": "scalp", "enabled": True, "params": {"ema_fast": 8, "ema_slow": 21,
                                                                          "rsi_n": 14, "atr_n": 14,
                                                                          "sl_mult": 1.5, "tp_mult": 3.0,
                                                                          "rsi_low": 40, "rsi_high": 60}}]}

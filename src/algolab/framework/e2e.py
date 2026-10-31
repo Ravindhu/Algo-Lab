@@ -127,9 +127,10 @@ def run_e2e(symbols: list[str], bars: int = 3000, seed: int = 7, data_dir: Path 
             warmup: int = 130, strategy_types: tuple[str, ...] = ("ocl",),
             keep_fraction: float = 1.0) -> dict:
     base = json.loads((ROOT / "config" / "framework.json").read_text())
+    # strategy_types is the explicit list to replay (validation passes only the strategies it enabled).
+    # The config's "enabled" flag is not applied here, so a replay tests exactly what it was asked to.
     cfg = {**base, "enabled": True,
-           "strategies": [s for s in base["strategies"]
-                          if s["type"] in strategy_types and s.get("enabled", True)]}
+           "strategies": [s for s in base["strategies"] if s["type"] in strategy_types]}
     cfg["max_spread_atr"] = cfg.get("max_spread_atr", 0.25)
 
     pcfg = load_prop_config()

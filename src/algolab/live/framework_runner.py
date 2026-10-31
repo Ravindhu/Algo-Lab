@@ -246,9 +246,14 @@ def _apply_events(objs: dict, events: list[dict]) -> None:
 
 
 async def run_framework(ad, p: dict, symbols: list[str], equity: float, now: datetime | None = None,
-                        cfg: dict | None = None, prop_cfg: dict | None = None) -> dict | None:
-    """Returns {"results", "events", "prop", "orphans"}, or None when the framework is disabled.
-    cfg and prop_cfg default to the config files; tests and the e2e replay pass their own."""
+                        cfg: dict | None = None, prop_cfg: dict | None = None, *,
+                        allow_entries: bool = True, entry_block_reason: str | None = None) -> dict | None:
+    """Returns {"results", "events", "prop", "orphans", "entries_blocked"}, or None when the framework is disabled.
+    cfg and prop_cfg default to the config files; tests and the e2e replay pass their own.
+
+    Position management (exits, trailing stops, prop flatten, reconciliation) ALWAYS runs. allow_entries only
+    decides whether this cycle may open new positions. The live cycle passes False when a guard blocks trading
+    (kill switch, drawdown, validation, max open trades), so managed exits keep working during a halt."""
     cfg = load_config() if cfg is None else cfg
     if not cfg.get("enabled"):
         return None
@@ -287,7 +292,12 @@ async def run_framework(ad, p: dict, symbols: list[str], equity: float, now: dat
     _apply_events(objs, events)
     for ev in events:
         journal.record_close(ev)
-    results = await bot.run_once()
+    if allow_entries:
+        results = await bot.run_once()
+    else:
+        # No new entries this cycle. Signals are not consumed, so nothing is marked as traded.
+        results = []
+        log.info("new entries not allowed this cycle: %s", entry_block_reason)
 
     write_json(STRATEGY_STATE, {_key(name, sym): o.state() for (name, sym), o in objs.items()
                                 if isinstance(o, MultiTimeframeStrategy)})
@@ -295,4 +305,5 @@ async def run_framework(ad, p: dict, symbols: list[str], equity: float, now: dat
     if guard is not None:
         write_json(PROP_STATE, {**guard.state_dict(), "profile": guard.s.profile})
     return {"results": results, "events": events, "orphans": orphans,
+            "entries_blocked": None if allow_entries else entry_block_reason,
             "prop": guard.summary() if guard is not None else None}

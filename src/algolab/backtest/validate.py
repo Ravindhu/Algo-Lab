@@ -35,6 +35,12 @@ REPLAY_DEFAULTS = {"framework_min_trades": 30, "framework_min_profit_factor": 1.
                    "framework_replay_bars": 6000, "framework_replay_seed": 7}
 
 
+def _enabled(entry: dict) -> bool:
+    """The same switch the live cycle uses (default off). Imported here to keep this module light."""
+    from algolab.framework.strategies import registry
+    return registry.enabled(entry)
+
+
 def load_config() -> tuple[Params, Costs, dict]:
     from algolab import strategy as S
     costs = json.loads((ROOT / "config" / "backtest.json").read_text())["costs"]
@@ -51,7 +57,7 @@ def config_fingerprint() -> str:
         "strategy": {k: cur[k] for k in S.KEYS}, "ml_threshold": cur.get("ml_threshold"),
         "framework": {k: fw.get(k) for k in ("enabled", "timeframe", "max_open", "risk_per_trade",
                                               "max_lots", "max_spread_atr", "max_margin_use", "magic")},
-        "framework_strategies": [[e["type"], bool(e.get("enabled", True)), e.get("params", {})]
+        "framework_strategies": [[e["type"], _enabled(e), e.get("params", {})]
                                  for e in fw["strategies"]],
         "costs": json.loads((ROOT / "config" / "backtest.json").read_text())["costs"],
         "validation": json.loads((ROOT / "config" / "validation.json").read_text()),
@@ -107,7 +113,7 @@ def framework_replay(cfg: dict, keep_fraction: float = 1.0) -> dict:
     from algolab.framework.e2e import run_e2e
 
     fw = json.loads(FRAMEWORK_CONFIG.read_text())
-    enabled = [e["type"] for e in fw["strategies"] if fw.get("enabled") and e.get("enabled", True)]
+    enabled = [e["type"] for e in fw["strategies"] if fw.get("enabled") and _enabled(e)]
     if not enabled:
         return {"passed": True, "reasons": ["no framework strategies enabled"], "types": [],
                 "trades": 0, "net": 0.0, "profit_factor": None}

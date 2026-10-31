@@ -16,9 +16,16 @@ services:
   dashboard:
     build: .
     command: ["python", "scripts/run_dashboard.py"]
-    env_file: .env
+    env_file: .env                   # DASH_PASSWORD is required; the dashboard refuses to start without it
+    environment:
+      # Bind all interfaces INSIDE the container so the published port works. The host publishes it on
+      # 127.0.0.1 only; a reverse proxy in front adds TLS and must keep the password check.
+      - DASH_HOST=0.0.0.0
     ports:
-      - "127.0.0.1:8050:8050"        # expose to trusted IP via ufw / reverse proxy
+      - "127.0.0.1:8050:8050"
     volumes:
       - ./reports:/app/reports
+      # state/ must be writable: Stop writes state/KILL, Start removes it, and prop edits append to
+      # state/prop_changes.jsonl. A read-only mount breaks Stop, which has to work at all times.
+      - ./state:/app/state
     restart: unless-stopped
