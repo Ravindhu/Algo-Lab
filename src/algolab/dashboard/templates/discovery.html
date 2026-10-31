@@ -24,12 +24,18 @@ body{background:var(--bg);color:var(--tx);font:12px/1.45 "JetBrains Mono",ui-mon
 .row{display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid #0d1d2d}
 .bar{height:4px;background:#0d1d2d;border-radius:3px;overflow:hidden;margin:2px 0 6px}.bar i{display:block;height:100%}
 .note{color:var(--dim);font-size:11px;margin-top:6px}
+.bank{margin:0 8px 8px}.bank table{width:100%;border-collapse:collapse}
+.bank th{text-align:left;color:var(--dim);font-weight:400;padding:4px 8px}
+.bank td{padding:5px 8px;border-top:1px solid #0d1d2d}
+.bank button{background:transparent;color:var(--cy);border:1px solid var(--ln);border-radius:3px;padding:2px 10px;font:inherit;cursor:pointer}
+.bank button:disabled{color:var(--dim);cursor:default}
 @media(max-width:1000px){.grid{grid-template-columns:1fr}.cv{min-height:400px}}
 </style></head><body>
 <div class="top">
  <span class="logo">ALGOLAB // DISCOVERY FACTORY</span> <a class="chip" href="live.html" style="text-decoration:none">← LIVE</a>
  <span class="chip on">REPORT ONLY</span><span class="chip on">SEALED 10% NEVER READ</span><span class="chip warn">SIMULATED NUMBERS</span>
  <span class="chip">21 families · 8 filters</span>
+ <span class="chip">animation is a mock; real results are in the bank below</span>
 </div>
 <div class="grid">
  <section class="pn"><h3>Family weights <span>loop feedback</span></h3><div class="bd" id="fw"></div></section>
@@ -93,4 +99,36 @@ function draw(){
  requestAnimationFrame(draw);
 }
 draw();
+</script>
+<section class="pn bank"><h3>Candidate bank <span>one click adds a DISABLED entry · enabling stays manual</span></h3>
+ <div class="bd"><div id="bank"></div><div class="note" id="bank-msg"></div></div></section>
+<script>
+(function(){
+ const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+ const num=(v,d)=>v==null?'':Number(v).toFixed(d);
+ const msg=t=>{document.getElementById('bank-msg').textContent=t};
+ async function load(){
+  try{
+   const j=await (await fetch('api/bank')).json(),el=document.getElementById('bank');
+   if(!j.rows.length){el.innerHTML='<div class="note">No candidates yet. Run discovery first.</div>';return}
+   const head=['#','symbol','tf','family','score','hold-out PF','trades','status',''].map(h=>`<th>${h}</th>`).join('');
+   el.innerHTML='<table><tr>'+head+'</tr>'+j.rows.map(r=>`<tr>
+    <td>${r.rank}</td><td>${esc(r.symbol)}</td><td>${esc(r.tf)}</td><td>${esc(r.family)}</td>
+    <td>${num(r.score,1)}</td><td>${num(r.holdout_pf,2)}</td><td>${esc(r.trades)}</td>
+    <td class="${r.can_promote?'g':'d'}">${esc(r.status)}</td>
+    <td><button data-rank="${r.rank}" ${r.can_promote?'':'disabled'}>Promote</button></td></tr>`).join('')+'</table>';
+  }catch(e){msg('Could not load the bank: '+e.message)}
+ }
+ document.getElementById('bank').addEventListener('click',async e=>{
+  const b=e.target.closest('button[data-rank]');if(!b||b.disabled)return;
+  b.disabled=true;const rank=b.dataset.rank;
+  try{
+   const r=await fetch('api/discovery/promote/'+rank,{method:'POST'});
+   if(r.ok)msg(`Candidate ${rank} added as DISABLED. Run algolab validate, then enable it by hand.`);
+   else{const j=await r.json();msg('Refused: '+j.detail)}
+  }catch(err){msg('Promote failed: '+err.message)}
+  load();
+ });
+ load();setInterval(load,15000);
+})();
 </script></body></html>
