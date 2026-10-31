@@ -28,8 +28,8 @@ Registry contract:
   - ``register()`` maps each class's ``name`` to the class.
   - ``load(name)`` imports the module lazily on first use, so an import error in one
     strategy file cannot break the others until that strategy is actually requested.
-  - ``enabled(entry)`` honours the per-strategy ``"enabled": false`` flag in config
-    (default true), so a strategy can ship disabled.
+  - ``enabled(entry)`` runs a strategy only when its config entry has ``"enabled": true``
+    (default false). A new strategy therefore cannot trade until someone turns it on explicitly.
 """
 from __future__ import annotations
 
@@ -103,5 +103,6 @@ def _safe(module_name: str, attr: str) -> list[type]:
 
 
 def enabled(entry: dict) -> bool:
-    """Per-strategy on/off switch from config/framework.json. Default is on."""
-    return bool(entry.get("enabled", True))
+    """Per-strategy on/off switch from config/framework.json. Default is OFF: a strategy trades only when its
+    entry says "enabled": true explicitly. A missing key must never turn a strategy on."""
+    return entry.get("enabled") is True

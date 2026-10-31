@@ -21,6 +21,7 @@ import importlib
 import importlib.metadata as md
 import json
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import ModuleType
@@ -85,6 +86,14 @@ def _field(obj, *names, default=None):
         elif hasattr(obj, n):
             return getattr(obj, n)
     return default
+
+
+def server_utc_offset(server_epoch: float, utc_epoch: float) -> int:
+    """Seconds the broker's server clock runs ahead of UTC, rounded to the nearest 30 minutes.
+    MT5 stamps bars and ticks with the broker's server clock, not UTC. server_epoch is the tick time, and
+    utc_epoch is this machine's clock (epoch seconds are the same everywhere). The rounding absorbs local
+    clock skew of up to 15 minutes."""
+    return int(round((server_epoch - utc_epoch) / 1800.0)) * 1800
 
 
 def _installed_version() -> str:
@@ -169,11 +178,18 @@ class Mt5Adapter:
         return len(positions)
 
     async def candles(self, symbol: str, tf_name: str, count: int) -> pd.DataFrame:
-        """Closed and forming bars, oldest first. Index = bar time (UTC, naive)."""
+        """Closed and forming bars, oldest first. Index = bar time in UTC (naive).
+        MT5 bar times are on the broker's server clock, so they are converted with the offset from a live tick.
+        A tick with no server time fails closed: the bars cannot be placed in UTC."""
         if tf_name not in TIMEFRAMES:
             raise AdapterError(f"unknown timeframe {tf_name}")
         if not await self._run(self.mt5.symbol_select, symbol, True):
             raise self._err(f"symbol_select({symbol})")
+        tick = await self._run(self.mt5.symbol_info_tick, symbol)
+        server_time = float(_field(tick, "time", default=0) or 0) if tick is not None else 0.0
+        if server_time <= 0:
+            raise AdapterError(f"{symbol}: no server time from tick; bar times cannot be converted to UTC")
+        offset = server_utc_offset(server_time, time.time())
         rates = await self._run(self.mt5.copy_rates_from_pos, symbol,
                                 getattr(self.mt5, f"TIMEFRAME_{tf_name}"), 0, count)
         if rates is None or len(rates) == 0:
@@ -182,7 +198,7 @@ class Mt5Adapter:
         need = {"time", "open", "high", "low", "close"}
         if not need <= set(df.columns):
             raise AdapterError(f"{symbol}: candle columns missing {need - set(df.columns)}")
-        df["time"] = pd.to_datetime(df["time"], unit="s")
+        df["time"] = pd.to_datetime(df["time"] - offset, unit="s")
         return df.set_index("time")[["open", "high", "low", "close"]].sort_index()
 
     # --- instrument data and orders (synchronous: the pipeline calls them one at a time) ---

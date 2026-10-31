@@ -2,6 +2,8 @@
 account currency, so the quote-to-account conversion lives in one place."""
 from __future__ import annotations
 
+import math
+
 from algolab.live.adapter import AdapterError
 
 
@@ -31,5 +33,7 @@ def lots_from_risk(risk_money: float, sl_dist: float, contract_size: float, rate
     if sl_dist <= 0 or contract_size <= 0 or rate <= 0:
         return 0.0
     risk_per_lot = sl_dist * contract_size * rate
-    steps = int(risk_money / risk_per_lot / volume_step)
-    return min(steps * volume_step, max_lots)
+    # Floor with a small epsilon: float division can land just below a whole step (2.9999... for 3.0),
+    # and int() would then drop a step. Same rule as framework_runner._snap_volume.
+    steps = math.floor(risk_money / risk_per_lot / volume_step + 1e-9)
+    return round(min(steps * volume_step, max_lots), 8)

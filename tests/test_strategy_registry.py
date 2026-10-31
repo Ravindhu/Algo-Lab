@@ -35,9 +35,12 @@ def test_unknown_type_raises_with_available_names():
         registry.load("does_not_exist")
 
 
-def test_enabled_defaults_to_true_and_honours_false():
-    assert registry.enabled({}) is True
+def test_enabled_defaults_to_off_and_needs_explicit_true():
+    # A missing key must never turn a strategy on (fix: default-deny).
+    assert registry.enabled({}) is False
     assert registry.enabled({"enabled": False}) is False
+    assert registry.enabled({"enabled": True}) is True
+    assert registry.enabled({"enabled": "true"}) is False   # only the boolean True counts
 
 
 def test_example_strategy_contract_on_random_data():
