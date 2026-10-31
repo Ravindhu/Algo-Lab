@@ -9,6 +9,7 @@ import pytest
 from algolab import discovery_factory as df_mod
 from algolab import discovery_promote as dp
 from algolab.framework.strategies.discovered import DiscoveredStrategy
+from algolab.live.adapter import AdapterError
 
 
 def _ohlc(n, seed):
@@ -73,26 +74,26 @@ def test_refuses_fib_family_and_wrong_hold():
         DiscoveredStrategy("EURUSD", "M15")
 
 
-def test_refuses_short_and_two_sided_genomes(tmp_path):
-    """The replay simulator is BUY-only, so only long-only genomes may be promoted."""
-    for d in (0, -1):
-        ok, why = df_mod.live_compatible(_genome(dir_=d))
-        assert not ok and "long-only" in why
-        root = _write_root(tmp_path / f"d{d}", [_cand(_genome(dir_=d))])
-        with pytest.raises(dp.PromoteError, match="cannot run live"):
-            dp.promote(root, 1)
-    assert df_mod.live_compatible(_genome(dir_=1))[0]
+def test_accepts_long_short_and_two_sided_genomes():
+    """The replay trades both sides now, so every direction is promotable."""
+    for d in (1, 0, -1):
+        assert df_mod.live_compatible(_genome(dir_=d))[0]
 
 
-def test_replay_runs_discovered_entry_with_invariants():
-    """The framework replay (the validate gate's engine) must trade a long-only discovered entry
-    and keep every invariant. Synthetic data: this checks wiring, not performance."""
+@pytest.mark.parametrize("d", [1, -1, 0])
+def test_replay_runs_discovered_entry_with_invariants(d, tmp_path, monkeypatch):
+    """The framework replay (the validate gate's engine) must trade a discovered entry in each direction
+    and keep every invariant. Synthetic data: this checks wiring, not performance. State goes to a
+    temp folder, never the repo's state/ (the bot dedupes signals through it)."""
     import asyncio
     from algolab.framework.e2e import SPREADS, build_data, check_invariants
     from algolab.framework.replay import SimBroker, run_replay
+    from algolab.ops import alerts, state as ops_state
     from algolab.profile import ROOT
 
-    g = _genome("hm_cross", dir_=1)
+    monkeypatch.setattr(ops_state, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(alerts, "send", lambda *a, **k: True)
+    g = _genome("hm_cross", dir_=d)
     base = json.loads((ROOT / "config" / "framework.json").read_text())
     cfg = {**base, "enabled": True, "strategies": [
         {"type": "discovered", "enabled": True,
@@ -103,6 +104,48 @@ def test_replay_runs_discovered_entry_with_invariants():
     assert len(sim.trades) > 0
     assert all(c["ok"] for c in check_invariants(sim, out["curve"], None, cfg))
     assert not [r for r in out["results"] if r.get("error")]
+    if d == 1:
+        assert all(t["side"] == 1 for t in sim.trades)
+    if d == -1:
+        assert all(t["side"] == -1 for t in sim.trades)
+    # Tracked and classified: no "unmanaged position" block, and closes come back as framework events
+    assert not any("unmanaged" in str(r.get("why", "")) for r in out["results"])
+    reasons = {e["reason"] for e in out["events"]}
+    assert reasons and reasons <= {"DISASTER", "TP", "BROKER_CLOSE"}
+
+
+
+def test_simulator_short_fills_stops_targets_and_pnl():
+    """Short side of the replay broker, same convention as the live adapter."""
+    import asyncio
+    from algolab.framework.replay import CONTRACT, SimBroker
+    idx = pd.date_range("2024-01-01", periods=6, freq="5min")
+    bars = pd.DataFrame({"open": [1.1000] * 6, "high": [1.1005] * 6, "low": [1.0995] * 6,
+                         "close": [1.1000] * 6}, index=idx)
+    sim = SimBroker({"EURUSD": {"M5": bars, "M15": bars}}, idx, {"EURUSD": 0.0002}, 10000.0, commission_per_lot=0.0)
+    sim.set_index(1)
+    bid = sim.tick("EURUSD")["bid"]
+    res = sim.market_order("EURUSD", "SELL", 0.1, bid + 0.0050, bid - 0.0100, 1, 20)
+    assert res["fill_price"] == pytest.approx(bid)
+    assert sim.positions[res["ticket"]]["side"] == -1
+    with pytest.raises(AdapterError):                     # SELL stop must sit above the fill
+        sim.market_order("EURUSD", "SELL", 0.1, bid - 0.001, 0.0, 1, 20)
+    # bar with high above the stop -> stop-out at the stop level, a loss
+    stop_bars = bars.copy()
+    stop_bars.iloc[2, stop_bars.columns.get_loc("high")] = bid + 0.0060
+    sim.data["EURUSD"]["M5"] = stop_bars
+    sim.intrabar(2)
+    assert not sim.positions and sim.trades[-1]["reason"] == "DISASTER"
+    assert sim.trades[-1]["pnl"] == pytest.approx(-0.0050 * 0.1 * CONTRACT)
+    # target hit on a short -> a profit
+    sim.set_index(3)
+    res2 = sim.market_order("EURUSD", "SELL", 0.1, bid + 0.0050, bid - 0.0040, 1, 20)
+    tgt_bars = bars.copy()
+    tgt_bars.iloc[4, tgt_bars.columns.get_loc("low")] = bid - 0.0045
+    sim.data["EURUSD"]["M5"] = tgt_bars
+    sim.intrabar(4)
+    assert sim.trades[-1]["reason"] == "TP" and sim.trades[-1]["pnl"] > 0
+    assert res2["ticket"] not in sim.positions
 
 
 def test_hold_is_fixed_under_search():

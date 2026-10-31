@@ -163,6 +163,11 @@ def build_bot(ad, p: dict, symbols: list[str], equity: float, cfg: dict, account
             obj.on_entry()
             tracked[str(rec["ticket"])] = positions.new_record(
                 rec, strategy=rec["strategy"], ltf=obj.ltf_tf, htf=obj.htf_tf)
+        elif obj is not None and not isinstance(obj, MultiTimeframeStrategy):
+            # Plain strategies (scalp, discovered): broker stop and target, tracked so the close is
+            # classified, journaled, and no longer blocks entries as an unmanaged position.
+            tracked[str(rec["ticket"])] = positions.new_plain_record(
+                rec, strategy=rec["strategy"], tf=obj.timeframe.value)
         write_json(POSITIONS_STATE, tracked)
         journal.record_open(source="framework", strategy=rec["strategy"], symbol=rec["symbol"],
                             side=rec["side"], ticket=rec.get("ticket"), lots=rec["lots"],
@@ -232,7 +237,7 @@ def build_bot(ad, p: dict, symbols: list[str], equity: float, cfg: dict, account
 def _apply_events(objs: dict, events: list[dict]) -> None:
     for ev in events:
         obj = objs.get((ev["strategy"], ev["symbol"]))
-        if obj is not None:
+        if obj is not None and hasattr(obj, "on_exit"):
             obj.on_exit(ev["reason"], ev["price"])
         pnl = ev.get("pnl")
         pnl_txt = "P&L unknown" if pnl is None else f"P&L {pnl:+.2f}"

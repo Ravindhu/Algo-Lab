@@ -103,7 +103,7 @@ def check_invariants(sim: SimBroker, curve: list[dict], prop_rules, cfg_ocl: dic
         max_lots = prop_rules.max_lots
         bad_size = []
         for o in sim.orders:
-            risk = (o["fill"] - o["sl"]) * o["lots"] * CONTRACT_SIZE * 1.0
+            risk = abs(o["fill"] - o["sl"]) * o["lots"] * CONTRACT_SIZE * 1.0
             limit = o["equity"] * prop_rules.max_risk_per_trade_pct / 100
             if max_lots and o["lots"] > max_lots + 1e-9:
                 bad_size.append(f"{o['ticket']} lots {o['lots']} > {max_lots}")
@@ -111,8 +111,9 @@ def check_invariants(sim: SimBroker, curve: list[dict], prop_rules, cfg_ocl: dic
                 bad_size.append(f"{o['ticket']} risk {risk:.2f} > {limit:.2f}")
         checks.append({"name": "sizes within prop risk and lot caps", "ok": not bad_size,
                        "detail": bad_size[:3] or "ok"})
-    checks.append({"name": "every order has its broker stop below the fill",
-                   "ok": all(o["sl"] < o["fill"] for o in sim.orders),
+    checks.append({"name": "every order has its broker stop on the losing side of the fill",
+                   "ok": all((o["sl"] < o["fill"]) if o.get("side", "BUY") == "BUY" else (o["sl"] > o["fill"])
+                             for o in sim.orders),
                    "detail": f"{len(sim.orders)} order(s)"})
     return checks
 

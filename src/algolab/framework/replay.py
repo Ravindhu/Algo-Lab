@@ -97,18 +97,26 @@ class SimBroker:
 
     def market_order(self, symbol: str, side: str, lots: float, sl: float, tp: float,
                      magic: int, deviation: int) -> dict:
-        if side != "BUY":
-            raise AdapterError("sim supports BUY only (the OCL strategy is BUY only)")
-        fill = self.tick(symbol)["ask"]
-        if not sl < fill:
-            raise AdapterError(f"invalid stop {sl} for fill {fill}")
+        # Same convention as the live adapter: BUY fills at the ask with the stop below,
+        # SELL fills at the bid with the stop above. Position side is +1 (BUY) or -1 (SELL).
+        if side == "BUY":
+            sign, fill = 1, self.tick(symbol)["ask"]
+            if not sl < fill:
+                raise AdapterError(f"invalid stop {sl} for BUY fill {fill}")
+        elif side == "SELL":
+            sign, fill = -1, self.tick(symbol)["bid"]
+            if not sl > fill:
+                raise AdapterError(f"invalid stop {sl} for SELL fill {fill}")
+        else:
+            raise AdapterError(f"unknown side {side!r}")
         self._ticket += 1
         t = self._ticket
-        self.positions[t] = {"ticket": t, "symbol": symbol, "side": 1, "price_open": fill,
+        self.positions[t] = {"ticket": t, "symbol": symbol, "side": sign, "price_open": fill,
                              "sl": float(sl), "tp": float(tp) if tp and tp > 0 else None,
                              "volume": float(lots), "magic": int(magic), "time": self.now}
-        self.orders.append({"ticket": t, "symbol": symbol, "lots": float(lots), "fill": fill,
-                            "sl": float(sl), "tp": tp, "time": self.now, "equity": self.equity_mark()})
+        self.orders.append({"ticket": t, "symbol": symbol, "side": side, "lots": float(lots),
+                            "fill": fill, "sl": float(sl), "tp": tp, "time": self.now,
+                            "equity": self.equity_mark()})
         return {"ticket": t, "fill_price": fill}
 
     def close_position(self, ticket: int, symbol: str, side: int, volume: float,
@@ -122,10 +130,10 @@ class SimBroker:
     # ---- broker-side fills and accounting ----
     def _close(self, ticket: int, px: float, reason: str) -> None:
         pos = self.positions.pop(ticket)
-        gross = (px - pos["price_open"]) * pos["volume"] * CONTRACT * self.rate(pos["symbol"])
+        gross = (px - pos["price_open"]) * pos["side"] * pos["volume"] * CONTRACT * self.rate(pos["symbol"])
         net = gross - 2 * self.commission * pos["volume"]
         self.balance += net
-        self.trades.append({"ticket": ticket, "symbol": pos["symbol"], "lots": pos["volume"],
+        self.trades.append({"ticket": ticket, "symbol": pos["symbol"], "side": pos["side"], "lots": pos["volume"],
                             "entry_time": str(pos["time"]), "exit_time": str(self.now),
                             "entry": pos["price_open"], "exit": px, "pnl": net, "reason": reason})
 
@@ -136,16 +144,22 @@ class SimBroker:
             if pos is None:
                 continue
             _, high, low, _ = self._ohlc(pos["symbol"], self.ltf, j)
-            if low <= pos["sl"]:
+            if pos["side"] > 0:                       # long: stop below, target above
+                stop_hit = low <= pos["sl"]
+                tp_hit = pos["tp"] is not None and high >= pos["tp"]
+            else:                                     # short: stop above, target below
+                stop_hit = high >= pos["sl"]
+                tp_hit = pos["tp"] is not None and low <= pos["tp"]
+            if stop_hit:
                 self._close(t, pos["sl"], "DISASTER")
-            elif pos["tp"] is not None and high >= pos["tp"]:
+            elif tp_hit:
                 self._close(t, pos["tp"], "TP")
 
     def equity_mark(self) -> float:
         floating = 0.0
         for pos in self.positions.values():
-            floating += (self._mid(pos["symbol"]) - pos["price_open"]) * pos["volume"] * CONTRACT \
-                * self.rate(pos["symbol"])
+            floating += (self._mid(pos["symbol"]) - pos["price_open"]) * pos["side"] * pos["volume"] \
+                * CONTRACT * self.rate(pos["symbol"])
         return self.balance + floating
 
     # ---- adapter methods added for the live safety checks ----
