@@ -46,7 +46,8 @@
         "disaster_stop_atr": 1.0,
         "max_spread_atr": 0.25,
         "lookback": 120
-      }
+      },
+      "enabled": false
     },
     {
       "type": "ocl_sell_fail_top",
