@@ -53,6 +53,7 @@ th:first-child,td:first-child{text-align:left}
 .trk{position:relative;height:10px;margin-bottom:4px;border-bottom:1px dashed var(--ln)}.trk i{position:absolute;top:1px;width:8px;height:8px;border-radius:50%;box-shadow:0 0 8px currentColor}
 .risk .bd{display:flex;flex-direction:column}.risk .cv{min-height:50px}
 @media(max-width:1100px){html,body,.app{height:auto}.grid{grid-template-rows:none;grid-auto-rows:auto}.perf,.guard,.tape,.risk,.mc,.ring{grid-column:span 12}.cv{min-height:230px}.ringwrap{grid-template-columns:1fr}.perfbd{grid-template-columns:1fr}.row{flex-wrap:wrap}.ar{display:none}}
+.nav-btn{background:transparent;color:var(--cy);border:1px solid var(--ln);border-radius:3px;padding:2px 10px;font:inherit;cursor:pointer}.nav-btn:disabled{color:var(--dim);cursor:default}
 </style></head><body>
 <div class="app">
 <div class="top">
@@ -60,7 +61,7 @@ th:first-child,td:first-child{text-align:left}
  <span class="chip on">DRY_RUN</span><span class="chip warn">SIMULATED FEED</span>
  <span class="chip">3 accounts · 4 symbols · M5</span>
  <span class="chip on" id="kchip">KILL SWITCH OFF</span><span class="chip warn" id="apistate">API ?</span>
- <span class="sp"></span><a class="nav" href="discovery.html">Discovery</a><button id="kbtn">STOP</button><span class="c" id="clk"></span>
+ <span class="sp"></span><a class="nav" href="discovery.html">Discovery</a><button class="nav-btn" id="propbtn">Prop rules</button><button id="kbtn">STOP</button><span class="c" id="clk"></span>
 </div>
 <div class="grid">
  <section class="pn perf"><h3>Account P&amp;L and equity curve <span>all accounts combined · live</span></h3><div class="bd perfbd"><div>
@@ -190,4 +191,53 @@ for(let i=0;i<30;i++){price+=rnd(-.0003,.0003);const k=candles[candles.length-1]
 async function pollAlgo(){try{const r=await fetch('api/snapshot');if(!r.ok)throw new Error('HTTP '+r.status);const j=await r.json();$('apistate').textContent='API OK';$('apistate').className='chip on';if(j.kill!==killed)kill(j.kill,null)}catch(e){$('apistate').textContent='API OFFLINE: open http://127.0.0.1:8050';$('apistate').className='chip bad'}}
 setInterval(pollAlgo,2000);pollAlgo();
 setInterval(step,700);step();draw();
-</script></body></html>
+</script><div id="propmodal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;align-items:center;justify-content:center;padding:12px">
+ <div style="background:var(--pn);border:1px solid var(--ln);border-radius:4px;padding:14px;width:min(640px,100%);max-height:86vh;overflow:auto">
+  <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><b class="c" id="proptitle">Prop firm rules</b><span class="d" id="propprofile"></span></div>
+  <div class="note" id="propdesc"></div>
+  <table id="proptbl" style="width:100%;border-collapse:collapse;margin-top:8px"></table>
+  <div class="note">Saved changes apply from the next framework cycle. A refused value saves nothing. Prop enforcement is <span id="propen"></span> (on/off is set in config/prop.json).</div>
+  <div class="note" id="propmsg"></div>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px"><button class="nav-btn" id="propcancel">Cancel</button><button class="nav-btn" id="propsave">Save</button></div>
+ </div></div>
+<script>
+(function(){
+ const $=id=>document.getElementById(id);
+ const unit=n=>n.endsWith('_pct')?'%':n.endsWith('_hour_utc')?'hour (UTC)':n==='max_lots'?'lots':n==='min_trading_days'?'days':'';
+ let fields=[],rules={};
+ function setMsg(t,cls){const m=$('propmsg');m.textContent=t;m.className='note '+(cls||'')}
+ function render(){
+  $('proptbl').innerHTML='<tr>'+['rule','value','unit'].map(h=>`<th style="text-align:left;color:var(--dim);font-weight:400;padding:4px 8px">${h}</th>`).join('')+'</tr>'+
+   fields.map(f=>{const v=rules[f.name];const lock=f.name==='starting_balance'&&lockedBalance;
+    const input=f.type==='bool'?`<select data-k="${f.name}" style="background:var(--bg);color:var(--tx);border:1px solid var(--ln);font:inherit;padding:2px"><option value="true"${v?' selected':''}>true</option><option value="false"${!v?' selected':''}>false</option></select>`
+     :`<input data-k="${f.name}" type="number" step="any" value="${v}" ${lock?'disabled':''} style="background:var(--bg);color:var(--tx);border:1px solid var(--ln);font:inherit;padding:2px;width:120px">`;
+    return `<tr style="border-top:1px solid #0d1d2d"><td style="padding:5px 8px">${f.name}${lock?' <span class="d">(locked while state saved)</span>':''}</td><td style="padding:5px 8px">${input}</td><td class="d" style="padding:5px 8px">${unit(f.name)}</td></tr>`}).join('');
+ }
+ let lockedBalance=false;
+ async function load(){
+  try{const j=await (await fetch('api/prop')).json();fields=j.fields;rules=j.rules;
+   $('propprofile').textContent=j.profile;$('propdesc').textContent=j.description;
+   $('propen').textContent=j.enabled?'ON':'OFF';
+   lockedBalance=!!(j.saved_state&&j.saved_state.profile===j.profile);render();setMsg('')
+  }catch(e){setMsg('Could not load prop rules: '+e.message,'r')}
+ }
+ function open(){$('propmodal').style.display='flex';load()}
+ function close(){$('propmodal').style.display='none'}
+ async function save(){
+  const body={rules:{}};document.querySelectorAll('#proptbl [data-k]').forEach(el=>{if(!el.disabled)body.rules[el.dataset.k]=el.value});
+  $('propsave').disabled=true;
+  try{
+   const r=await fetch('api/prop',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+   const j=await r.json();
+   if(!r.ok){setMsg('Refused: '+(j.detail||r.status),'r');return}
+   const n=Object.keys(j.changes).length, msg=n?`Saved ${n} change(s). They apply from the next framework cycle.`:'No changes to save.';
+   await load();
+   setMsg(msg,'g');
+  }catch(e){setMsg('Save failed: '+e.message,'r')}
+  finally{$('propsave').disabled=false}
+ }
+ $('propbtn').addEventListener('click',open);$('propcancel').addEventListener('click',close);$('propsave').addEventListener('click',save);
+ $('propmodal').addEventListener('click',e=>{if(e.target.id==='propmodal')close()});
+})();
+</script>
+</body></html>

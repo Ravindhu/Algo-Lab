@@ -2,17 +2,19 @@
 
 Run:  uvicorn algolab.dashboard.api:app --host 127.0.0.1 --port 8050
 Writes are limited to two actions: start/stop, which only toggle the kill switch (see control.py),
-and promote, which adds a DISABLED entry to framework.json. Nothing here enables a strategy."""
+promote, which adds a DISABLED entry to framework.json, and prop, which edits the active prop-firm rules
+(validated and audited; applies from the next cycle). Nothing here enables a strategy or the prop switch."""
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 
 from algolab import discovery_promote as dp
-from algolab.dashboard import control
+from algolab.dashboard import control, prop_edit
+from algolab.framework.prop import PropError
 from algolab.profile import ROOT
 
 TEMPLATES = Path(__file__).parent / "templates"
@@ -75,3 +77,18 @@ def promote(rank: int):
         raise HTTPException(status_code=409, detail=str(e))
     return {"ok": True, "rank": rank, "enabled": entry["enabled"],
             "symbol": entry["params"]["only_symbol"], "timeframe": entry["params"]["timeframe"]}
+
+
+@app.get("/api/prop")
+def prop_get():
+    """Active prop-firm profile and its editable rules."""
+    return prop_edit.get_active(ROOT)
+
+
+@app.put("/api/prop")
+def prop_put(body: dict = Body(...)):
+    """Save changes to the active profile's rules. A refused value returns 409 and saves nothing."""
+    try:
+        return prop_edit.save_rules(ROOT, body.get("rules") or {})
+    except PropError as e:
+        raise HTTPException(status_code=409, detail=str(e))
