@@ -5,7 +5,9 @@
 # Rules:
 #   - Only the last CLOSED bar counts. The forming bar is dropped before the signal is computed.
 #   - Entry is a market order (next bar open, the same as the backtest's next-open entry).
-#   - Broker-side SL and TP only (ATR multiples from the genome). No time exit, no trail, no breakeven.
+#   - Broker-side SL and TP (ATR multiples from the genome), plus the genome's fixed hold as a time exit.
+#     The position manager applies the hold (positions.new_plain_record hold_bars), so live closes on the same
+#     bar the backtest does. No trail and no breakeven: the backtest does not model them, so live must not.
 #   - Only the symbol named in params["only_symbol"] trades. Promotion writes it, so one candidate
 #     never trades symbols it was not tested on.
 #   - Genomes whose entry needs a resting limit (fib families) are refused at construction.

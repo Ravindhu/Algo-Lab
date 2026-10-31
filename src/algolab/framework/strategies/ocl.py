@@ -42,7 +42,7 @@ from algolab.framework.strategies.indicators import atr as atr_series
 from algolab.framework.strategies.indicators import hm_bullish as _hm_gate
 from algolab.framework.strategies.multi import MultiTimeframeStrategy, closed
 from algolab.framework.protect import Protection
-from algolab.framework.timeframe import TimeFrame
+from algolab.framework.timeframe import SOURCE_TF, TimeFrame
 
 log = logging.getLogger("algolab.ocl")
 
@@ -50,9 +50,6 @@ AGGRESSIVE = "AGGRESSIVE"
 CONSERVATIVE = "CONSERVATIVE"
 EXIT_AUTO, EXIT_FIXED, EXIT_DYNAMIC = "AUTO", "FIXED", "DYNAMIC"
 
-# Timeframe names used in ocl_keylevel.py -> algolab names. algolab names also work.
-SOURCE_TF = {"1minute": "M1", "5minute": "M5", "15minute": "M15", "30minute": "M30",
-             "60minute": "H1", "day": "D1"}
 _META_KEYS = frozenset({"enabled", "reason", "version", "updated"})
 
 

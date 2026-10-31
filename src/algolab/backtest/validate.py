@@ -5,7 +5,7 @@ Two checks, both required before the live pipeline may trade:
   1. Legacy rule (H4 engulfing + Hilega-Milega, via the fixed backtest): the live parameters are tested on
      several folds of history, without fitting.
   2. Framework replay: every ENABLED framework strategy that the replay supports is run through the same
-     run_framework() code path the live cycle uses, on REAL M5/M15 data (never synthetic data), with the
+     run_framework() code path the live cycle uses, on REAL data for the timeframes the config names (never synthetic data), with the
      broker simulated. It must pass the invariant checks and clear trade-count and profit-factor thresholds.
      An enabled strategy the replay cannot test fails the gate, so nothing untested can trade.
 
@@ -29,7 +29,8 @@ from algolab.profile import ROOT, load_profile
 
 WARMUP_BARS = 300
 REPORT = ROOT / "reports" / "validation.json"
-REPLAY_TYPES = ("scalp", "ocl", "ocl_sell_fail_top", "ocl_sell_fail_bottom", "discovered")
+REPLAY_TYPES = ("scalp", "ocl", "ocl_sell_fail_top", "ocl_sell_fail_bottom", "discovered",
+                "engulfing_ocl", "engulfing_ocl_inv")
 FRAMEWORK_CONFIG = ROOT / "config" / "framework.json"
 REPLAY_DEFAULTS = {"framework_min_trades": 30, "framework_min_profit_factor": 1.2,
                    "framework_replay_bars": 6000, "framework_replay_seed": 7}
@@ -123,12 +124,17 @@ def framework_replay(cfg: dict, keep_fraction: float = 1.0) -> dict:
                 "reasons": [f"no replay validation for enabled strategy {t}: disable it or add replay support"
                             for t in untested]}
 
+    # The replay loads exactly the timeframes the replayed entries name in their config (htf, ltf, timeframe),
+    # the same selection run_e2e makes by type. A strategy on H4 therefore needs {SYMBOL}_H4.csv.
+    from algolab.framework.e2e import required_timeframes
+    replayed = [e for e in fw["strategies"] if e["type"] in set(enabled)]
+    tfs = required_timeframes(replayed, fw.get("timeframe", "M5"))
     symbols = load_profile_symbols()
     data = ROOT / "data"
-    missing = [s for s in symbols for tf in ("M5", "M15") if not (data / f"{s}_{tf}.csv").exists()]
+    missing = [s for s in symbols for tf in tfs if not (data / f"{s}_{tf}.csv").exists()]
     if missing:
         return {"passed": False, "types": enabled, "trades": 0, "net": 0.0, "profit_factor": None,
-                "reasons": [f"real M5/M15 data missing for replay: {sorted(set(missing))[:5]}"]}
+                "reasons": [f"real {'/'.join(tfs)} data missing for replay: {sorted(set(missing))[:5]}"]}
 
     defaults = {**REPLAY_DEFAULTS, **{k: cfg[k] for k in REPLAY_DEFAULTS if k in cfg}}
     rep = run_e2e(symbols, bars=int(defaults["framework_replay_bars"]),

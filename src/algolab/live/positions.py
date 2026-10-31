@@ -65,17 +65,26 @@ def new_record(rec: dict, *, strategy: str, ltf: str, htf: str) -> dict:
     }
 
 
-def new_plain_record(rec: dict, *, strategy: str, tf: str) -> dict:
-    """Tracking record for a plain (non-OCL) strategy. Its exits are the broker's stop and target only:
-    no trail, no breakeven, no HTF floor. The manager's job is to classify the close and record P&L,
-    so the trade reaches the journal and the entry gate, and it stops blocking new entries as an orphan."""
+def new_plain_record(rec: dict, *, strategy: str, tf: str, hold_bars: int | None = None) -> dict:
+    """Tracking record for a plain (non-OCL) strategy. Exits are the broker's stop and target, plus an optional
+    time exit (hold_bars). No trail, no breakeven, no HTF floor. The manager's job is to classify the close and
+    record P&L, so the trade reaches the journal and the entry gate, and it stops blocking new entries as an orphan.
+
+    hold_bars follows the discovery backtest exactly: the signal is on closed bar i, the entry is at the open of
+    bar i+1, and the trade closes at the close of bar i+1+hold_bars (run_bt_loop, `last = start + max_hold`).
+    exit_after is the open time of that last bar; the close happens once that bar has closed."""
     tp = float(rec["tp"]) if float(rec.get("tp") or 0) > 0 else None
     delta = TimeFrame(tf).seconds
+    signal_bar = pd.Timestamp(rec["bar"])
+    exit_after = None
+    if hold_bars is not None:
+        exit_after = str(signal_bar + pd.Timedelta(seconds=delta * (1 + int(hold_bars))))
     return {
         "kind": "plain", "ticket": int(rec["ticket"]), "strategy": strategy, "symbol": rec["symbol"],
         "side": rec.get("side", "BUY"), "ltf": tf, "volume": float(rec["lots"]),
         "sl": float(rec["sl"]), "tp": tp, "entry": float(rec["fill_price"]),
-        "last_bar": str(pd.Timestamp(rec["bar"]) + pd.Timedelta(seconds=delta)), "delta_s": delta,
+        "last_bar": str(signal_bar + pd.Timedelta(seconds=delta)), "delta_s": delta,
+        "exit_after": exit_after,
     }
 
 
@@ -121,9 +130,10 @@ def _close_at_market(ad, rec: dict, side: int, magic: int, deviation: int) -> tu
     return float(res["fill_price"]), _realized(ad, rec["ticket"])
 
 
-async def _manage_plain(ad, rec: dict, live_pos, lookback: int) -> dict | None:
-    """Plain record: the broker holds the stop and target. While it is open, only advance the bar marker.
-    Once it is gone, classify the close from the bars since the last cycle and book the realised P&L."""
+async def _manage_plain(ad, rec: dict, live_pos, lookback: int, magic: int, deviation: int) -> dict | None:
+    """Plain record: the broker holds the stop and target. While it is open, advance the bar marker and apply the
+    time exit (exit_after) once its bar has closed. Once the position is gone, classify the close from the bars
+    since the last cycle and book the realised P&L."""
     bars = await ad.candles(rec["symbol"], rec["ltf"], lookback)
     closed = bars.iloc[:-1]
     delta = pd.Timedelta(seconds=rec["delta_s"])
@@ -132,6 +142,12 @@ async def _manage_plain(ad, rec: dict, live_pos, lookback: int) -> dict | None:
     last_bar = str(closed.index[-1] + delta) if len(closed) else rec["last_bar"]
     if live_pos is not None:
         rec["last_bar"] = last_bar
+        if rec.get("exit_after") and len(closed) and closed.index[-1] >= pd.Timestamp(rec["exit_after"]):
+            try:
+                fill, pnl = _close_at_market(ad, rec, _broker_side(rec), magic, deviation)
+            except _StillOpen:
+                return None                    # partial close: retried next cycle
+            return _event(rec, "TIME", fill, pnl)
         return None
     buy = rec["side"] == "BUY"
     sl, tp = rec["sl"], rec["tp"]
@@ -153,7 +169,7 @@ async def _manage_plain(ad, rec: dict, live_pos, lookback: int) -> dict | None:
 
 async def _manage_one(ad, rec: dict, live_pos, magic: int, deviation: int, lookback: int) -> dict | None:
     if rec.get("kind") == "plain":
-        return await _manage_plain(ad, rec, live_pos, lookback)
+        return await _manage_plain(ad, rec, live_pos, lookback, magic, deviation)
     sym, ltf, htf = rec["symbol"], rec["ltf"], rec["htf"]
     protect = Protection.from_dict(rec["protect"])
     trade = Trade.from_dict(rec["trade"])
