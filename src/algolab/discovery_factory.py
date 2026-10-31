@@ -702,8 +702,10 @@ def live_compatible(genome) -> tuple[bool, str]:
         return False, f"entry family {genome.get('fam')} uses a resting fib limit (live places market orders only)"
     if int(genome.get("hold", -1)) != SLTP_HOLD:
         return False, f"hold {genome.get('hold')} is not the fixed SL/TP cap ({SLTP_HOLD}); live has no time exit"
-    if int(genome.get("dir", 0)) not in (-1, 0, 1):
-        return False, "invalid direction"
+    if int(genome.get("dir", 0)) != 1:
+        # The framework replay simulator is BUY-only, so short and two-sided genomes cannot be
+        # validated on real data yet. A genome that is not fully tested must not trade.
+        return False, "only long-only genomes (dir=1) can be replay-validated; the replay simulator is BUY-only"
     return True, "ok"
 
 

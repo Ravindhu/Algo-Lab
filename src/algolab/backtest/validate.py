@@ -29,7 +29,7 @@ from algolab.profile import ROOT, load_profile
 
 WARMUP_BARS = 300
 REPORT = ROOT / "reports" / "validation.json"
-REPLAY_TYPES = ("scalp", "ocl", "ocl_sell_fail_top", "ocl_sell_fail_bottom")
+REPLAY_TYPES = ("scalp", "ocl", "ocl_sell_fail_top", "ocl_sell_fail_bottom", "discovered")
 FRAMEWORK_CONFIG = ROOT / "config" / "framework.json"
 REPLAY_DEFAULTS = {"framework_min_trades": 30, "framework_min_profit_factor": 1.2,
                    "framework_replay_bars": 6000, "framework_replay_seed": 7}
