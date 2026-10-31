@@ -115,6 +115,27 @@ def cmd_select(args) -> int:
     return 0
 
 
+def cmd_promote(args) -> int:
+    """List discovery candidates, or promote one (rank) into framework.json as a DISABLED entry."""
+    from algolab import discovery_factory as df_mod
+    from algolab import discovery_promote as dp
+    try:
+        if not args.rank:
+            for i, c in enumerate(dp.list_candidates(ROOT), 1):
+                ok, why = df_mod.live_compatible(c["genome"])
+                print(f"{i:>2}. {c['symbol']} {c['tf']} {c['genome']['fam']} score {c['score']} "
+                      f"{'live-ready' if ok else 'NOT live: ' + why}")
+            return 0
+        entry = dp.promote(ROOT, args.rank)
+    except dp.PromoteError as e:
+        print(f"refused: {e}")
+        return 1
+    print(f"promoted rank {args.rank} as a DISABLED entry in config/framework.json "
+          f"(backup: config/framework.json.bak).\nNext: algolab validate, then enable it by hand.")
+    print(json.dumps(entry["params"]["genome"], indent=2))
+    return 0
+
+
 def cmd_status(_) -> int:
     live = read_json("live_last_cycle.json", {})
     health = read_json("health.json", {})
@@ -147,7 +168,8 @@ def cmd_resume(_) -> int:
 COMMANDS = {"doctor": cmd_doctor, "backtest": cmd_backtest, "validate": cmd_validate,
             "sealed": cmd_sealed,
             "optimize": cmd_optimize, "dashboard": cmd_dashboard, "status": cmd_status,
-            "kill": cmd_kill, "resume": cmd_resume, "select": cmd_select}
+            "kill": cmd_kill, "resume": cmd_resume, "select": cmd_select,
+            "promote": cmd_promote}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -155,6 +177,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command", choices=list(COMMANDS))
     parser.add_argument("--force", action="store_true",
                         help="sealed: run again for the same parameters (weakens the sealed test)")
+    parser.add_argument("--rank", type=int, default=0,
+                        help="promote: candidate rank to add (disabled). Omit to list candidates")
     parser.add_argument("--apply", action="store_true",
                         help="select: write framework.json (default: report only)")
     args = parser.parse_args(argv)

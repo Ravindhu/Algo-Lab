@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
-from dash import Dash, Input, Output, dcc, html
+from dash import Dash, Input, Output, State, dcc, html
 
 from algolab.memory import store as memory
 from algolab.ops import journal
@@ -289,7 +289,38 @@ app.layout = html.Div(style=PAGE, children=[
     dcc.Dropdown(id="metric", value="score", options=["score", "trades"], clearable=False,
                  style={"color": "#000", "width": "280px"}),
     dcc.Graph(id="opt-3d"),
+    html.H3("Promote a discovery candidate (adds a DISABLED entry)"),
+    html.Div([dcc.Dropdown(id="promote-rank", options=[], placeholder="pick a candidate",
+                           style={"color": "#000", "width": "520px"}),
+              html.Button("Promote", id="promote-btn", n_clicks=0, style=NAV_BTN)],
+             style={"display": "flex", "gap": "12px", "alignItems": "center"}),
+    html.Div(id="promote-status", style={"marginTop": "8px", "opacity": 0.85}),
 ])
+
+
+@app.callback(Output("promote-rank", "options"), Input("tick", "n_intervals"))
+def promote_options(_):
+    from algolab import discovery_promote as dp
+    try:
+        cands = dp.list_candidates(ROOT)
+    except dp.PromoteError:
+        return []
+    return [{"label": f"{i}. {c['symbol']} {c['tf']} {c['genome']['fam']} (score {c['score']})", "value": i}
+            for i, c in enumerate(cands, 1)]
+
+
+@app.callback(Output("promote-status", "children"), Input("promote-btn", "n_clicks"),
+              State("promote-rank", "value"), prevent_initial_call=True)
+def promote_click(_, rank):
+    from algolab import discovery_promote as dp
+    if not rank:
+        return "Pick a candidate first."
+    try:
+        dp.promote(ROOT, int(rank))
+    except dp.PromoteError as e:
+        return f"Refused: {e}"
+    return (f"Candidate {rank} added to framework.json as DISABLED. Run `algolab validate`, "
+            "then enable it by hand.")
 
 
 @app.callback(Output("tabs", "value"), Input("nav-discovery", "n_clicks"), prevent_initial_call=True)

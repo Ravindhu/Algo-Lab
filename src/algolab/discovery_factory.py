@@ -685,7 +685,26 @@ FLT_NAMES = list(FILTERS)
 FLT_P = np.array([0.28, 0.14, 0.11, 0.09, 0.09, 0.07, 0.12, 0.10])
 FLT_P = FLT_P / FLT_P.sum()
 
-EXIT_SPACE = dict(sl=("f", 0.8, 4.0), tp=("f", 0.8, 6.0), hold=("i", 4, 100))
+# Exits are FIXED to what the live bot can execute: a broker-side stop and target (ATR multiples,
+# optimized), and no time exit. The hold is a constant cap far beyond typical trade length, so it is
+# not searched. Live has no time-based close, so a short hold would make backtest and live disagree.
+SLTP_HOLD = 500
+EXIT_SPACE = dict(sl=("f", 0.8, 4.0), tp=("f", 0.8, 6.0), hold=("i", SLTP_HOLD, SLTP_HOLD))
+
+# Families whose entry is a resting limit (fib touch). The live bot places market orders only, so these
+# cannot be promoted to live yet.
+FIB_FAMILIES = {"engulfing_ocl"}
+
+
+def live_compatible(genome) -> tuple[bool, str]:
+    """Can the live bot run this genome as written? Returns (ok, reason)."""
+    if genome.get("fam") in FIB_FAMILIES:
+        return False, f"entry family {genome.get('fam')} uses a resting fib limit (live places market orders only)"
+    if int(genome.get("hold", -1)) != SLTP_HOLD:
+        return False, f"hold {genome.get('hold')} is not the fixed SL/TP cap ({SLTP_HOLD}); live has no time exit"
+    if int(genome.get("dir", 0)) not in (-1, 0, 1):
+        return False, "invalid direction"
+    return True, "ok"
 
 
 # ======================================================================================

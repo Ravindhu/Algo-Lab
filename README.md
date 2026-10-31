@@ -43,9 +43,10 @@ Both live jobs run only after the same guards pass: kill switch, validation, fre
 | `algolab validate` | Out-of-sample gate on real history (legacy rule + every enabled framework strategy, replayed). Required before live trading. Re-run after any settings change |
 | `algolab optimize` | Parameter search. Report only; `algolab optimize --apply` applies a candidate after you have reviewed it |
 | `algolab backtest` | Run the live rule on history |
+| `algolab promote` | List discovery candidates. `algolab promote --rank N` adds candidate N to `framework.json` as a DISABLED `discovered` entry (backup kept). Enable it by hand after `validate` |
 | `algolab kill` | Stop all trading now |
 | `algolab resume` | Allow trading again after you have reviewed the cause |
-| `algolab dashboard` | Web dashboard (read-only): overview, signals, trades, framework, agent |
+| `algolab dashboard` | Web dashboard: overview, signals, trades, framework, agent, discovery. The only write is the Promote button (adds a disabled entry) |
 | `algolab sealed` | One-time test on the sealed final 10% of history. The optimizer never sees it |
 | `algolab doctor` | Setup checks. Includes a drift check between strategy.json and framework.json |
 
