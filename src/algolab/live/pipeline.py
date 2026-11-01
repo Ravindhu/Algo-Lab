@@ -22,7 +22,7 @@ from algolab.live.framework_runner import run_framework
 from algolab import strategy as S
 from algolab.ops import alerts
 from algolab.ops.risk import adjusted_equity, check_limits
-from algolab.ops.state import (ROOT, LockBusy, cycle_lock, engage_kill, kill_switch_on,
+from algolab.ops.state import (ROOT, LockBusy, append_equity, cycle_lock, engage_kill, kill_switch_on,
                                now_utc, ops_config, write_json)
 from algolab.profile import load_profile
 
@@ -85,6 +85,11 @@ async def framework_cycle() -> dict:
         if fw is not None:
             report["framework"] = fw
     write_json("framework_last_cycle.json", report)
+    if report.get("equity") is not None:
+        try:
+            append_equity(report["equity"])
+        except OSError as e:
+            log.warning("equity history not written: %s", type(e).__name__)
     return report
 
 

@@ -87,5 +87,13 @@ def engage_kill(reason: str) -> None:
     atomic_write_text(STATE_DIR / "KILL", f"{now_utc().isoformat()} {reason}\n")
 
 
+def append_equity(equity: float) -> None:
+    """One line per framework cycle, for the dashboard equity curve. Append-only, never read by trading."""
+    path = STATE_DIR / "equity_history.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"ts": now_utc().isoformat(timespec="seconds"), "equity": float(equity)}) + "\n")
+
+
 def ops_config() -> dict:
     return json.loads((ROOT / "config" / "ops.json").read_text())
