@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from algolab import discovery_promote as dp
 from algolab.dashboard import control, prop_edit, security
+from algolab.dashboard import trade_setup as ts
 from algolab.framework.prop import PropError
 from algolab.profile import ROOT
 
@@ -112,4 +113,23 @@ def prop_put(body: dict = Body(...)):
     try:
         return prop_edit.save_rules(ROOT, body.get("rules") or {})
     except PropError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.get("/api/setup")
+def setup_get():
+    """Trade setup: HTF, LTF, risk per trade and symbols, read from config/."""
+    try:
+        return ts.read_setup(ROOT)
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise HTTPException(status_code=500, detail=f"could not read config: {e}")
+
+
+@app.put("/api/setup")
+def setup_put(body: dict = Body(...)):
+    """Validate and save HTF, LTF, risk and symbols. An invalid value returns 409 and writes nothing."""
+    _require_writes()
+    try:
+        return ts.save_setup(body, ROOT, allow_writes=True)
+    except ts.SetupError as e:
         raise HTTPException(status_code=409, detail=str(e))
