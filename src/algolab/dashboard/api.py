@@ -196,3 +196,17 @@ def validate_start():
         return panels.start_validate(ROOT, background=True)
     except JobBusy as e:
         raise HTTPException(status_code=409, detail=str(e))
+
+
+def main() -> None:
+    """Starts the dashboard (used by `algolab dashboard` and the Docker service). Refuses to start without
+    DASH_PASSWORD. Host and port come from DASH_HOST (default 127.0.0.1) and DASH_PORT (default 8050)."""
+    import os
+    import uvicorn
+    from algolab.dashboard import security as sec
+    sec.require_password_for_start()
+    uvicorn.run(app, host=os.getenv("DASH_HOST", "127.0.0.1"), port=int(os.getenv("DASH_PORT", "8050")))
+
+
+if __name__ == "__main__":
+    main()

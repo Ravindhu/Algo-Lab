@@ -101,8 +101,8 @@ def cmd_optimize(args) -> int:
 
 
 def cmd_dashboard(_) -> int:
-    from algolab.dashboard.app import main as dash_main
-    dash_main()
+    from algolab.dashboard.api import main as dashboard_main
+    dashboard_main()
     return 0
 
 

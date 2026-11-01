@@ -46,7 +46,7 @@ Both live jobs run only after the same guards pass: kill switch, validation, fre
 | `algolab promote` | List discovery candidates. `algolab promote --rank N` adds candidate N to `framework.json` as a DISABLED `discovered` entry (backup kept). Enable it by hand after `validate` |
 | `algolab kill` | Stop all trading now |
 | `algolab resume` | Allow trading again after you have reviewed the cause |
-| `algolab dashboard` | Web dashboard: overview, signals, trades, framework, agent, discovery. The only write is the Promote button (adds a disabled entry) |
+| `algolab dashboard` | FastAPI dashboard: trade setup, prop rules, discovery, and the Monitor popup (status, positions, trades, risk, signals, equity, alerts, autotune, tokens, validate). Writes need `DASH_ALLOW_WRITES=true` |
 | `algolab sealed` | One-time test on the sealed final 10% of history. The optimizer never sees it |
 | `algolab doctor` | Setup checks. Includes a drift check between strategy.json and framework.json |
 
