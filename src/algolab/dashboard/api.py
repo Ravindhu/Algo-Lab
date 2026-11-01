@@ -15,8 +15,9 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from algolab import discovery_promote as dp
-from algolab.dashboard import control, prop_edit, security
+from algolab.dashboard import control, panels, prop_edit, security
 from algolab.dashboard import trade_setup as ts
+from algolab.dashboard.panels import JobBusy
 from algolab.framework.prop import PropError
 from algolab.profile import ROOT
 
@@ -132,4 +133,66 @@ def setup_put(body: dict = Body(...)):
     try:
         return ts.save_setup(body, ROOT, allow_writes=True)
     except ts.SetupError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+# ---------- monitor panels (read-only, except the validate job) ----------
+
+@app.get("/api/status")
+def status_panel():
+    return panels.status(ROOT)
+
+
+@app.get("/api/trades")
+def trades_panel(limit: int = 100):
+    return {"rows": panels.trades(max(1, min(limit, 500)))}
+
+
+@app.get("/api/positions")
+def positions_panel():
+    return {"rows": panels.open_positions()}
+
+
+@app.get("/api/risk")
+def risk_panel():
+    return panels.risk(ROOT)
+
+
+@app.get("/api/signals")
+def signals_panel(limit: int = 50):
+    return {"rows": panels.signals(max(1, min(limit, 200)), ROOT)}
+
+
+@app.get("/api/equity")
+def equity_panel(limit: int = 500):
+    return {"rows": panels.equity(max(1, min(limit, 5000)))}
+
+
+@app.get("/api/alerts")
+def alerts_panel():
+    return {"rows": panels.alerts()}
+
+
+@app.get("/api/autotune")
+def autotune_panel():
+    return panels.autotune(ROOT)
+
+
+@app.get("/api/tokens")
+def tokens_panel():
+    return panels.tokens(ROOT)
+
+
+@app.get("/api/validate/job")
+def validate_job_panel():
+    return panels.validate_job()
+
+
+@app.post("/api/validate")
+def validate_start():
+    """Runs `algolab validate` in the background. Needs DASH_ALLOW_WRITES=true. One run at a time."""
+    _require_writes()
+    try:
+        return panels.start_validate(ROOT, background=True)
+    except JobBusy as e:
         raise HTTPException(status_code=409, detail=str(e))
