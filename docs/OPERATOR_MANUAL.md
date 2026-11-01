@@ -116,7 +116,7 @@ Each optimizer run that selects on the holdout is counted in `state/holdout_ledg
 ## 7b. Trade journal and entry gate
 
 Every executed order and every framework closure is written to `state/journal.jsonl`. The dashboard's
-Trades tab reads it. The framework's entry gate uses the closed trades: after `warmup_entries` open trades
+Monitor > Trades tab reads it. The framework's entry gate uses the closed trades: after `warmup_entries` open trades
 and before `min_trades` closes, entries are allowed. After that, entries need the lower bound of the recent
 win rate to clear `min_lower_bound` (0.25 is the breakeven win rate for a 3R target, before costs).
 
