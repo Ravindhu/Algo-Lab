@@ -54,6 +54,31 @@ th:first-child,td:first-child{text-align:left}
 .risk .bd{display:flex;flex-direction:column}.risk .cv{min-height:50px}
 @media(max-width:1100px){html,body,.app{height:auto}.grid{grid-template-rows:none;grid-auto-rows:auto}.perf,.guard,.tape,.risk,.mc,.ring{grid-column:span 12}.cv{min-height:230px}.ringwrap{grid-template-columns:1fr}.perfbd{grid-template-columns:1fr}.row{flex-wrap:wrap}.ar{display:none}}
 .nav-btn{background:transparent;color:var(--cy);border:1px solid var(--ln);border-radius:3px;padding:2px 10px;font:inherit;cursor:pointer}.nav-btn:disabled{color:var(--dim);cursor:default}
+.note{color:var(--dim);margin:6px 0;font-size:11px}.note.r{color:var(--rd)}.note.g{color:var(--gr)}.note.a{color:var(--am)}
+.mon{margin:10px 8px 24px;padding:0 8px}
+.mon-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0 8px}
+.mon-bar h2{margin:0;font-size:14px;color:var(--cy)}
+.tabs{display:flex;gap:4px;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch}
+.tabbtn{color:var(--dim);border:1px solid var(--ln);white-space:nowrap;flex:0 0 auto}
+.tabbtn.on{color:var(--bg);background:var(--cy);border-color:var(--cy)}
+.mon-body{margin-top:8px;min-height:220px}
+.mon-body .bd{overflow:auto;max-height:70vh}
+.mon .kv{margin:6px 0}
+.mon-h{font-weight:600;margin-top:8px}
+.tw{overflow-x:auto}.tw table{min-width:520px}
+.mon-risk{margin-bottom:12px}.mon-risk .row2{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.eqsvg{width:100%;height:200px;display:block;background:#060e18;border:1px solid var(--ln);border-radius:3px}
+pre.tail{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;background:#060e18;border:1px solid var(--ln);padding:6px;max-height:240px;overflow:auto}
+@media(max-width:640px){
+ .top{padding:6px 8px;gap:6px 10px}
+ .top .sp{display:none}
+ .grid{padding:6px}
+ .mon{margin:8px 0 16px;padding:0 6px}
+ .mon-body .bd{padding:6px;max-height:none}
+ .kv{grid-template-columns:1fr 1fr}
+ .big{font-size:26px}
+ #propmodal>div,#setupmodal>div{width:100%;max-height:92vh}
+}
 </style></head><body>
 <div class="app">
 <div class="top">
@@ -61,7 +86,7 @@ th:first-child,td:first-child{text-align:left}
  <span class="chip on">DRY_RUN</span><span class="chip warn">SIMULATED FEED</span>
  <span class="chip">3 accounts · 4 symbols · M5</span>
  <span class="chip on" id="kchip">KILL SWITCH OFF</span><span class="chip warn" id="apistate">API ?</span>
- <span class="sp"></span><a class="nav" href="discovery.html">Discovery</a><button class="nav-btn" id="setupbtn">Trade setup</button><button class="nav-btn" id="propbtn">Prop rules</button><button id="kbtn">STOP</button><span class="c" id="clk"></span>
+ <span class="sp"></span><a class="nav" href="#monitor">Monitor</a><a class="nav" href="discovery.html">Discovery</a><button class="nav-btn" id="setupbtn">Trade setup</button><button class="nav-btn" id="propbtn">Prop rules</button><button id="kbtn">STOP</button><span class="c" id="clk"></span>
 </div>
 <div class="grid">
  <section class="pn perf"><h3>Account P&amp;L and equity curve <span>all accounts combined · live</span></h3><div class="bd perfbd"><div>
@@ -191,7 +216,91 @@ for(let i=0;i<30;i++){price+=rnd(-.0003,.0003);const k=candles[candles.length-1]
 async function pollAlgo(){try{const r=await fetch('api/snapshot');if(!r.ok)throw new Error('HTTP '+r.status);const j=await r.json();$('apistate').textContent='API OK';$('apistate').className='chip on';if(j.kill!==killed)kill(j.kill,null)}catch(e){$('apistate').textContent='API OFFLINE: open http://127.0.0.1:8050';$('apistate').className='chip bad'}}
 setInterval(pollAlgo,2000);pollAlgo();
 setInterval(step,700);step();draw();
-</script><div id="propmodal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;align-items:center;justify-content:center;padding:12px">
+</script><section id="monitor" class="mon">
+ <div class="mon-bar">
+  <h2>MONITOR</h2><span class="sp"></span>
+  <button class="nav-btn" id="startbtn">Start trading</button>
+  <span class="d" id="monmsg"></span>
+ </div>
+ <nav class="tabs" id="tabs"></nav>
+ <div class="pn mon-body"><div id="panel" class="bd"></div></div>
+</section>
+<script>
+(function(){
+ const $=id=>document.getElementById(id);
+ const el=(tag,props={},kids=[])=>{const n=document.createElement(tag);Object.entries(props).forEach(([k,v])=>{if(k==='text')n.textContent=v;else n.setAttribute(k,v)});kids.forEach(k=>n.append(k));return n};
+ const note=(text,cls)=>el('div',{class:'note '+(cls||''),text});
+ const kv=(k,v,cls)=>el('div',{},[el('span',{text:k}),el('b',{class:cls||'',text:String(v)})]);
+ const sideCls=v=>v==='BUY'?'g':(v==='SELL'?'r':'');
+ const pnlCls=v=>typeof v==='number'?(v>=0?'g':'r'):'a';
+ async function get(path){const r=await fetch('api/'+path,{cache:'no-store'});const j=await r.json();if(!r.ok)throw new Error(j.detail||('HTTP '+r.status));return j}
+ async function post(path){const r=await fetch('api/'+path,{method:'POST'});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||('HTTP '+r.status));return j}
+ function table(rows,cols){
+  if(!rows.length)return note('No data yet.');
+  const t=el('table');
+  t.append(el('thead',{},[el('tr',{},cols.map(c=>el('th',{text:c[1]})))]));
+  t.append(el('tbody',{},rows.map(r=>el('tr',{},cols.map(c=>{const v=r[c[0]];const cls=c[2]?c[2](v,r):'';return el('td',{class:cls,text:v==null?'':String(v)})})))));
+  return el('div',{class:'tw'},[t]);
+ }
+ const TABS=[
+  ['status','Status',async b=>{const s=await get('status');
+    b.append(el('div',{class:'kv'},[kv('Trading',s.can_trade?'ON':'HALTED',s.can_trade?'g':'r'),kv('Mode',s.dry_run?'DRY RUN (no orders)':'LIVE orders',s.dry_run?'a':'r'),kv('Validation',s.validation.state,s.validation.passed?'g':'r'),kv('Last cycle',s.last_cycle||'none')]));
+    if(s.halts.length){b.append(el('div',{class:'mon-h r',text:'Trading is stopped because:'}));b.append(el('ul',{},s.halts.map(h=>el('li',{text:h}))))}
+    else b.append(note('No halts. Each cycle still applies its own entry guard.','g'));
+    if(s.validation.reasons.length)b.append(note('Validation: '+s.validation.reasons.join('; ')))}],
+  ['positions','Positions',async b=>{const r=await get('positions');b.append(table(r.rows,[['ticket','ticket'],['symbol','symbol'],['side','side',sideCls],['strategy','strategy'],['lots','lots'],['entry','entry'],['sl','sl'],['tp','tp'],['time','opened']]))}],
+  ['trades','Trades',async b=>{const r=await get('trades?limit=100');b.append(table(r.rows,[['time','time'],['kind','kind'],['strategy','strategy'],['symbol','symbol'],['side','side',sideCls],['entry','entry'],['sl','sl'],['pnl','P&L',pnlCls],['R','R']]))}],
+  ['risk','Risk',async b=>{const r=await get('risk');if(r.note)return b.append(note(r.note));
+    b.append(note('Equity '+r.equity+' (from the last cycle)'));
+    const C={ok:'on',warn:'warn',breach:'bad'}, F={ok:'var(--gr)',warn:'var(--am)',breach:'var(--rd)'};
+    if(!r.items.length)b.append(note('No loss limits configured.'));
+    r.items.forEach(i=>b.append(el('div',{class:'mon-risk'},[el('div',{class:'row2'},[el('b',{text:i.name}),el('span',{class:'chip '+C[i.status],text:i.status})]),el('div',{class:'d',text:i.used_pct+'% used of '+i.limit_pct+'%'+(i.note?' · '+i.note:'')}),el('div',{class:'bar'},[el('i',{style:'width:'+Math.min(i.used_pct/i.limit_pct*100,100)+'%;background:'+F[i.status]})])])))}],
+  ['signals','Signals',async b=>{const r=await get('signals?limit=50');b.append(table(r.rows,[['time','time'],['symbol','symbol'],['side','side',sideCls],['rsi','RSI'],['confidence','conf'],['reason','reason']]))}],
+  ['equity','Equity',async b=>{const rows=(await get('equity?limit=500')).rows;
+    if(rows.length<2){b.append(note(rows.length?'One point so far. The curve fills in as cycles run.':'No equity recorded yet. It is written after each framework cycle.'));return}
+    const W=600,H=200,P=8,ys=rows.map(x=>x.equity),lo=Math.min(...ys),hi=Math.max(...ys),span=(hi-lo)||1;
+    const pts=rows.map((x,i)=>(P+i*(W-2*P)/(rows.length-1)).toFixed(1)+','+(H-P-(x.equity-lo)/span*(H-2*P)).toFixed(1)).join(' ');
+    const NS='http://www.w3.org/2000/svg',svg=document.createElementNS(NS,'svg'),pl=document.createElementNS(NS,'polyline');
+    svg.setAttribute('viewBox','0 0 '+W+' '+H);svg.setAttribute('preserveAspectRatio','none');svg.setAttribute('class','eqsvg');
+    pl.setAttribute('points',pts);pl.setAttribute('fill','none');pl.setAttribute('stroke','#3fd0ff');pl.setAttribute('stroke-width','2');
+    svg.append(pl);b.append(svg);
+    b.append(note('Low '+lo.toFixed(2)+' · High '+hi.toFixed(2)+' · Last '+ys[ys.length-1].toFixed(2)+' · '+rows.length+' points'))}],
+  ['alerts','Alerts',async b=>{const r=await get('alerts');b.append(note('Last time each alert type was sent. Failed deliveries are retried, not recorded.'));b.append(table(r.rows,[['key','alert'],['last_sent','last sent']]))}],
+  ['autotune','Autotune',async b=>{const a=await get('autotune');
+    if(!a.ran)return b.append(note('No optimizer run yet. Run it from the CLI: algolab optimize'));
+    b.append(el('div',{class:'kv'},[kv('Trials',a.trials),kv('Applied',a.applied?'yes':'no'),kv('Rolled back',a.rolled_back?'yes':'no')]));
+    if(a.best){b.append(el('div',{class:'mon-h',text:'Best trial'}));b.append(table([a.best],Object.keys(a.best).map(k=>[k,k])))}
+    if(a.reasons.length)b.append(note(a.reasons.join('; ')));
+    b.append(note('Read-only. Applying a candidate stays a manual step (algolab optimize --apply).'))}],
+  ['tokens','Tokens',async b=>{const t=await get('tokens');
+    b.append(el('div',{class:'kv'},[kv('Used today',t.used.toLocaleString()+' / '+t.limit.toLocaleString()),kv('Calls',t.calls),kv('Cached',t.cached),kv('Day (UTC)',t.day)]));
+    b.append(el('div',{class:'bar'},[el('i',{style:'width:'+Math.min(t.ratio*100,100)+'%;background:'+(t.ratio>=1?'var(--rd)':t.ratio>=0.7?'var(--am)':'var(--cy)')})]))}],
+  ['validate','Validate',async b=>{const j=await get('validate/job');
+    b.append(el('button',{class:'nav-btn',id:'valrun',text:'Run validation'}));
+    b.append(note('Runs algolab validate on the real history CSVs. It can take a while. Stop trading first if settings are being changed.'));
+    if(j.state==='idle'){b.append(note('No validation has been run from this page yet.'));return}
+    b.append(el('div',{class:'kv'},[kv('State',j.state,j.state==='done'?'g':(j.state==='failed'?'r':'a')),kv('Started',j.started||'-'),kv('Finished',j.finished||'-'),kv('Exit code',j.returncode==null?'-':j.returncode)]));
+    if(j.tail)b.append(el('pre',{class:'tail',text:j.tail}))}]
+ ];
+ let cur='status';
+ function msg(t,cls){const m=$('monmsg');m.textContent=t;m.className='d '+(cls||'')}
+ async function refresh(){const t=TABS.find(x=>x[0]===cur),nb=el('div');
+  try{await t[2](nb)}catch(e){nb.replaceChildren(note('Could not load: '+e.message,'r'))}
+  $('panel').replaceChildren(nb);
+  const run=$('valrun');if(run)run.onclick=startValidate}
+ function show(id){cur=id;document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.id===id));refresh()}
+ async function startValidate(){
+  if(!confirm('Run algolab validate now? It reads the history CSVs and can take a while.'))return;
+  try{await post('validate');msg('Validation started.','g');show('validate')}catch(e){msg(e.message,'r')}}
+ TABS.forEach(([id,label])=>$('tabs').append(el('button',{class:'tabbtn'+(id===cur?' on':''),'data-id':id,text:label})));
+ $('tabs').addEventListener('click',e=>{const b=e.target.closest('button[data-id]');if(b)show(b.dataset.id)});
+ $('startbtn').addEventListener('click',async()=>{
+  if(!confirm('Start trading? Orders are placed only when DRY_RUN is false and every guard passes.'))return;
+  try{await post('algo/start');msg('Trading started. Guards still apply each cycle.','g');refresh()}catch(e){msg(e.message,'r')}});
+ refresh();setInterval(refresh,5000);
+})();
+</script>
+<div id="propmodal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;align-items:center;justify-content:center;padding:12px">
  <div style="background:var(--pn);border:1px solid var(--ln);border-radius:4px;padding:14px;width:min(640px,100%);max-height:86vh;overflow:auto">
   <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><b class="c" id="proptitle">Prop firm rules</b><span class="d" id="propprofile"></span></div>
   <div class="note" id="propdesc"></div>
